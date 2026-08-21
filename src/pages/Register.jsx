@@ -2,13 +2,12 @@ import React, { useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import Navbar from '../components/Navbar'
-import { motion } from 'framer-motion'
+import { Video, ArrowRight } from 'lucide-react'
 
 const Register = () => {
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [confirmPassword, setConfirmPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const { register } = useAuth()
@@ -17,121 +16,92 @@ const Register = () => {
   const handleSubmit = async (e) => {
     e.preventDefault()
     setError('')
-
-    if (password !== confirmPassword) {
-      setError('Passwords do not match')
-      return
-    }
-
     setLoading(true)
+
     const result = await register(name, email, password)
     if (result.success) {
       navigate('/dashboard')
     } else {
-      setError(result.error)
+      setError(result.error || 'Registration failed')
     }
     setLoading(false)
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-900">
+    <div className="min-h-screen bg-white dark:bg-[#1a1b1f] text-slate-800 dark:text-slate-200 flex flex-col antialiased">
       <Navbar />
 
-      <motion.div
-        className="flex items-center justify-center min-h-screen px-4"
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5 }}
-      >
-        <div className="card max-w-md w-full">
-          <h2 className="text-3xl font-bold text-gray-900 dark:text-white mb-6 text-center">Create Account</h2>
+      <main className="flex-1 flex items-center justify-center p-6">
+        <div className="w-full max-w-md p-8 bg-gray-50 dark:bg-[#28292c] border border-gray-200 dark:border-[#3c4043] rounded-3xl shadow-xl space-y-6">
+          <div className="text-center space-y-2">
+            <div className="w-12 h-12 rounded-2xl bg-blue-600 text-white flex items-center justify-center mx-auto shadow-md">
+              <Video className="w-6 h-6" />
+            </div>
+            <h1 className="text-2xl font-normal text-gray-900 dark:text-white">Create Account</h1>
+            <p className="text-xs text-gray-500 dark:text-gray-400">to get started with VIT Connect</p>
+          </div>
 
           {error && (
-            <motion.div
-              className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg mb-4"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-            >
+            <div className="p-3 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-900/40 text-red-600 dark:text-[#f28b82] rounded-xl text-xs">
               {error}
-            </motion.div>
+            </div>
           )}
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                Full Name
-              </label>
+              <label className="text-xs font-semibold text-gray-600 dark:text-gray-300 block mb-1">Full name</label>
               <input
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                className="input-field"
                 placeholder="John Doe"
+                className="w-full px-4 py-3 bg-white dark:bg-[#202124] border border-gray-300 dark:border-[#3c4043] rounded-xl text-sm text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:border-blue-600 dark:focus:border-[#8ab4f8]"
                 required
               />
             </div>
 
             <div>
-              <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                Email
-              </label>
+              <label className="text-xs font-semibold text-gray-600 dark:text-gray-300 block mb-1">Email</label>
               <input
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="input-field"
-                placeholder="you@example.com"
+                placeholder="name@example.com"
+                className="w-full px-4 py-3 bg-white dark:bg-[#202124] border border-gray-300 dark:border-[#3c4043] rounded-xl text-sm text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:border-blue-600 dark:focus:border-[#8ab4f8]"
                 required
               />
             </div>
 
             <div>
-              <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                Password
-              </label>
+              <label className="text-xs font-semibold text-gray-600 dark:text-gray-300 block mb-1">Password</label>
               <input
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="input-field"
                 placeholder="••••••••"
+                className="w-full px-4 py-3 bg-white dark:bg-[#202124] border border-gray-300 dark:border-[#3c4043] rounded-xl text-sm text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:border-blue-600 dark:focus:border-[#8ab4f8]"
                 required
               />
             </div>
 
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                Confirm Password
-              </label>
-              <input
-                type="password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                className="input-field"
-                placeholder="••••••••"
-                required
-              />
-            </div>
-
-            <motion.button
+            <button
               type="submit"
               disabled={loading}
-              className="btn-primary w-full"
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
+              className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm rounded-xl transition-colors shadow-md flex items-center justify-center gap-2"
             >
-              {loading ? 'Creating account...' : 'Create Account'}
-            </motion.button>
+              <span>{loading ? 'Creating account...' : 'Create Account'}</span>
+              <ArrowRight className="w-4 h-4" />
+            </button>
           </form>
 
-          <p className="text-center text-gray-600 dark:text-gray-400 mt-6">
+          <div className="pt-2 text-center text-xs text-gray-500 dark:text-gray-400">
             Already have an account?{' '}
-            <Link to="/login" className="text-purple-600 hover:text-purple-700 font-semibold">
-              Sign in here
+            <Link to="/login" className="text-blue-600 dark:text-[#8ab4f8] font-semibold hover:underline">
+              Sign in
             </Link>
-          </p>
+          </div>
         </div>
-      </motion.div>
+      </main>
     </div>
   )
 }

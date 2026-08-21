@@ -14,9 +14,9 @@ def create_app():
 
     db.init_app(app)
     JWTManager(app)
-    CORS(app, resources={r"/api/*": {"origins": ["http://localhost:3000"]}})
+    CORS(app, resources={r"/api/*": {"origins": "*"}})
 
-    socketio = SocketIO(app, cors_allowed_origins=["http://localhost:3000"], async_mode='threading')
+    socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
     setup_socket_events(socketio)
 
     with app.app_context():

@@ -1,5 +1,6 @@
 import React, { createContext, useState, useContext, useEffect } from 'react'
 import axios from 'axios'
+import { API_ENDPOINTS } from '../config/api'
 
 const AuthContext = createContext()
 
@@ -19,7 +20,7 @@ export const AuthProvider = ({ children }) => {
 
   const verifyToken = async () => {
     try {
-      const response = await axios.get('http://localhost:5000/api/auth/verify', {
+      const response = await axios.get(API_ENDPOINTS.auth.verify, {
         headers: { Authorization: `Bearer ${token}` }
       })
       setUser(response.data.user)
@@ -34,7 +35,7 @@ export const AuthProvider = ({ children }) => {
 
   const login = async (email, password) => {
     try {
-      const response = await axios.post('http://localhost:5000/api/auth/login', { email, password })
+      const response = await axios.post(API_ENDPOINTS.auth.login, { email, password })
       const { token: newToken, user: userData } = response.data
       localStorage.setItem('token', newToken)
       localStorage.setItem('userName', userData.name)
@@ -49,7 +50,7 @@ export const AuthProvider = ({ children }) => {
 
   const register = async (name, email, password) => {
     try {
-      const response = await axios.post('http://localhost:5000/api/auth/register', { name, email, password })
+      const response = await axios.post(API_ENDPOINTS.auth.register, { name, email, password })
       const { token: newToken, user: userData } = response.data
       localStorage.setItem('token', newToken)
       localStorage.setItem('userName', userData.name)

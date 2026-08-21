@@ -4,6 +4,7 @@ import Navbar from '../components/Navbar'
 import axios from 'axios'
 import { motion } from 'framer-motion'
 import { Video, ArrowLeft, PlusCircle, AlignLeft } from 'lucide-react'
+import { API_ENDPOINTS } from '../config/api'
 
 const CreateMeeting = () => {
   const [title, setTitle] = useState('')
@@ -19,7 +20,7 @@ const CreateMeeting = () => {
 
     try {
       const response = await axios.post(
-        'http://localhost:5000/api/meetings/create',
+        API_ENDPOINTS.meetings.create,
         { title, description },
         { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }
       )
