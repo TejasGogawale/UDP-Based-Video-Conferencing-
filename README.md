@@ -242,6 +242,3 @@ VIT Connect is configured for **Vercel** deployment with SPA route rewrites in `
 
 ---
 
-## 📄 License
-
-This project is licensed under the MIT License. Feel free to use and extend for academic, personal, or commercial conferencing applications.
