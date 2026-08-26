@@ -10,7 +10,7 @@
 ![Vercel Ready](https://img.shields.io/badge/Vercel-Compatible-black?style=for-the-badge&logo=vercel)
 ![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
 
-**A high-performance, secure, real-time video conferencing and collaboration platform designed for PC and mobile browsers.**
+**A high-performance, secure, real-time video conferencing and collaboration platform designed for PC and mobile browsers. Try it on - (https://udp-based-video-conferencing.vercel.app/)**
 
 </div>
 
@@ -185,26 +185,6 @@ vit-connect/
    ```
 3. Open your browser at: `http://localhost:3000`
 
----
-
-## ☁️ Deployment Guide
-
-### Deploying Frontend to Vercel (One-Click Ready)
-
-VIT Connect is configured for **Vercel** deployment with SPA route rewrites in `vercel.json`.
-
-1. Push your repository to **GitHub** or **GitLab**.
-2. Go to **[Vercel Dashboard](https://vercel.com)** and click **Add New Project** -> Select your repo.
-3. Vercel automatically detects the Vite configuration:
-   * **Framework Preset**: `Vite`
-   * **Build Command**: `npm run build`
-   * **Output Directory**: `dist`
-4. Under **Environment Variables**, add:
-   * `VITE_API_URL`: Your deployed backend API URL (e.g. `https://your-backend.onrender.com` or Railway/Fly.io).
-   * `VITE_SOCKET_URL`: Your deployed backend WebSocket URL.
-5. Click **Deploy**.
-
----
 
 ## 🔌 API Reference & WebSocket Events
 
