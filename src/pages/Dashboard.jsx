@@ -4,6 +4,7 @@ import Navbar from '../components/Navbar'
 import axios from 'axios'
 import { useAuth } from '../context/AuthContext'
 import { API_ENDPOINTS } from '../config/api'
+import { formatMeetingCode, meetingLink, meetingRefFromInput } from '../lib/meetingCode'
 import {
   Video,
   Plus,
@@ -109,9 +110,7 @@ const Dashboard = () => {
         { title: `Meeting - ${new Date().toLocaleDateString()}` },
         { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }
       )
-      const code = res.data.meeting.meeting_code
-      const formatted = `${code.slice(0, 3)}-${code.slice(3, 7)}-${code.slice(7, 10)}`
-      setLaterMeetingLink(`${window.location.origin}/conference/${formatted}`)
+      setLaterMeetingLink(meetingLink(res.data.meeting.meeting_code))
       setShowLaterModal(true)
       fetchMeetings()
     } catch (err) {
@@ -142,7 +141,7 @@ const Dashboard = () => {
   const handleJoinByInput = (e) => {
     e.preventDefault()
     if (!joinInput.trim()) return
-    const cleanCode = joinInput.trim().replace(/[^a-zA-Z0-9-]/g, '')
+    const cleanCode = meetingRefFromInput(joinInput)
     if (cleanCode) {
       navigate(`/conference/${cleanCode}`)
     }
@@ -151,12 +150,12 @@ const Dashboard = () => {
   const handleSendReminder = async (meetingId, meetingTitle) => {
     setReminderSendingId(meetingId)
     try {
-      await axios.post(
+      const res = await axios.post(
         API_ENDPOINTS.meetings.sendReminder(meetingId),
         {},
         { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }
       )
-      setReminderToast(`Reminder emails sent for "${meetingTitle}"!`)
+      setReminderToast(`${meetingTitle}: ${res.data.message}`)
       setTimeout(() => setReminderToast(''), 4000)
     } catch (err) {
       console.error('Failed to send reminder:', err)
@@ -496,7 +495,10 @@ const Dashboard = () => {
                 >
                   <div className="min-w-0 pr-2">
                     <p className="text-sm font-semibold text-gray-900 dark:text-white truncate">{m.title}</p>
-                    <p className="text-xs text-gray-400 font-mono mt-0.5">{m.meeting_code}</p>
+                    <p className="text-xs text-gray-400 font-mono mt-0.5">
+                      {formatMeetingCode(m.meeting_code)}
+                      {m.active_participants > 0 && <span className="ml-2 font-sans text-emerald-500">● {m.active_participants} in call</span>}
+                    </p>
                   </div>
                   <button
                     onClick={() => navigate(`/conference/${m.meeting_code || m.id}`)}

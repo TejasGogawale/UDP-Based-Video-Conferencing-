@@ -7,7 +7,6 @@ import {
   PenTool,
   Radio,
   Download,
-  Users2,
   ChevronRight,
   Sparkles,
   Disc
@@ -18,7 +17,6 @@ export const ActivitiesDrawer = ({
   onOpenWhiteboard,
   onOpenPolls,
   onOpenQA,
-  onOpenBreakouts,
   onToggleRecording,
   isRecording,
   onDownloadTranscript
@@ -49,17 +47,9 @@ export const ActivitiesDrawer = ({
       action: onOpenQA
     },
     {
-      id: 'breakouts',
-      title: 'Breakout rooms',
-      desc: 'Split participants into small group discussions',
-      icon: Users2,
-      color: 'from-emerald-500 to-teal-600',
-      action: onOpenBreakouts
-    },
-    {
       id: 'recording',
       title: isRecording ? 'Stop Recording' : 'Recording',
-      desc: isRecording ? 'Recording is currently in progress' : 'Record this meeting for later playback',
+      desc: isRecording ? 'Recording in your browser. Stop to save the file.' : 'Save a video of this tab with everyone’s audio to your device (Chrome/Edge desktop)',
       icon: Disc,
       color: isRecording ? 'from-red-600 to-rose-700' : 'from-gray-600 to-slate-700',
       badge: isRecording ? '● REC' : null,
@@ -67,8 +57,8 @@ export const ActivitiesDrawer = ({
     },
     {
       id: 'transcript',
-      title: 'Download Transcript',
-      desc: 'Export text messages and meeting session history',
+      title: 'Download chat',
+      desc: 'Download the chat messages of this meeting as a text file',
       icon: Download,
       color: 'from-violet-500 to-purple-700',
       action: onDownloadTranscript
@@ -76,7 +66,7 @@ export const ActivitiesDrawer = ({
   ]
 
   return (
-    <div className="w-80 md:w-96 bg-[#202124] text-white flex flex-col h-full border-l border-[#3c4043] shadow-2xl z-30 animate-in slide-in-from-right duration-200">
+    <div className="w-full bg-[#202124] text-white flex flex-col h-full border-l border-[#3c4043] shadow-2xl z-30 animate-in slide-in-from-right duration-200">
       {/* Header */}
       <div className="flex items-center justify-between px-6 py-5 border-b border-[#3c4043]">
         <div className="flex items-center gap-2">

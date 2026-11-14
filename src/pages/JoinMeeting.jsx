@@ -3,6 +3,7 @@ import { useNavigate, Link } from 'react-router-dom'
 import Navbar from '../components/Navbar'
 import { motion } from 'framer-motion'
 import { Keyboard, ArrowLeft, Video } from 'lucide-react'
+import { meetingRefFromInput } from '../lib/meetingCode'
 
 const JoinMeeting = () => {
   const [meetingId, setMeetingId] = useState('')
@@ -13,7 +14,7 @@ const JoinMeeting = () => {
     e.preventDefault()
     setError('')
 
-    const cleanCode = meetingId.trim().toUpperCase().replace(/[^A-Z0-9]/g, '')
+    const cleanCode = meetingRefFromInput(meetingId)
 
     if (!cleanCode) {
       setError('Please enter a valid meeting code')
@@ -76,7 +77,7 @@ const JoinMeeting = () => {
                   value={meetingId}
                   onChange={(e) => setMeetingId(e.target.value)}
                   className="w-full pl-11 pr-4 py-3.5 bg-slate-50 dark:bg-[#181818] border border-slate-200 dark:border-[#2a2a2a] rounded-2xl focus:outline-none focus:ring-2 focus:ring-purple-500 dark:focus:ring-purple-400 focus:border-transparent dark:text-white transition-all text-lg placeholder-slate-400 font-mono tracking-wide"
-                  placeholder="e.g. ABC-DEFG-HIJK"
+                  placeholder="e.g. ABCD-EFGH-IJKL or a meeting link"
                   required
                 />
                 <Keyboard className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />

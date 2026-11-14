@@ -44,7 +44,7 @@ export const QAModal = ({
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-[#202124] text-white w-full max-w-lg rounded-2xl border border-[#3c4043] shadow-2xl overflow-hidden flex flex-col max-h-[85vh] animate-in zoom-in-95 duration-150">
+      <div className="bg-[#202124] text-white w-full max-w-lg rounded-2xl border border-[#3c4043] shadow-2xl overflow-hidden flex flex-col max-h-[85dvh] animate-in zoom-in-95 duration-150">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-[#3c4043]">
           <div className="flex items-center gap-2.5">
@@ -100,7 +100,7 @@ export const QAModal = ({
                     <div className="space-y-1.5 flex-1">
                       <div className="flex items-center gap-2">
                         <span className="text-xs font-semibold text-gray-300">{item.author}</span>
-                        <span className="text-[10px] text-gray-500">{item.timestamp || 'Just now'}</span>
+                        <span className="text-[10px] text-gray-500">{item.createdAt ? new Date(item.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Just now'}</span>
                         {item.isAnswered && (
                           <span className="px-2 py-0.5 bg-green-950/60 text-green-400 border border-green-800/40 rounded text-[10px] font-bold flex items-center gap-0.5">
                             <CheckCircle className="w-2.5 h-2.5" /> Answered

@@ -21,10 +21,10 @@
 **VIT Connect** provides an enterprise-grade video conferencing experience inspired by modern communication platforms, enriched with advanced real-time collaboration features, automated email notifications, and dual WebRTC mesh streaming.
 
 ### 🎥 Video & Audio Conferencing
-* **Dual-Mesh WebRTC Streaming**: Parallel peer connection pipelines for simultaneous HD camera/mic streams and crystal-clear screen sharing with system/tab audio.
-* **Smart Device & Camera Handling**: Resilient `getUserMedia` constraints with automatic fallback, mobile front/back camera support (`facingMode: 'user'`), and synthetic fallback tracks.
-* **Visual Effects & Camera Filters**: Background blur (`blur-sm`, `blur-lg`) and real-time color grading (Warm, Cool, Noir, Vivid).
-* **Audio Visualizer & Sound Effects**: Dynamic speaking ripple indicators, input level meters, join/leave chimes, and hand-raise alerts.
+* **WebRTC Mesh Streaming**: One peer connection per participant pair carries microphone, camera and screen share (with tab audio). Tracks can be added or swapped at any time (perfect negotiation). Best with up to about 6 people on camera.
+* **Device Handling**: Single permission prompt, clear permission/device errors, live microphone/camera/speaker switching, automatic recovery when a device is unplugged.
+* **Backgrounds & Effects**: Real person segmentation (MediaPipe) for background blur, preset and uploaded background images, and colour filters. The processed video is what other participants receive.
+* **Audio Levels & Active Speaker**: Real microphone level meters, active-speaker highlight, join/leave chimes and hand-raise alerts.
 
 ### 📱 Responsive: Mobile & PC Compatible
 * **PC & Desktop Layout**: Spacious control dock, 1-to-4+ column adaptive tiled grid, side-by-side docking drawers (`w-80` / `w-96`), and keyboard shortcuts (<kbd>Ctrl+D</kbd> Mic, <kbd>Ctrl+E</kbd> Camera).
@@ -34,12 +34,11 @@
 * **Touch-Enabled Digital Whiteboard**: Real-time collaborative whiteboard with multi-color palettes, eraser, highlighter, PNG export, and full touch drawing support (`onTouchStart`, `onTouchMove`, `onTouchEnd`).
 * **Live Interactive Polls**: Create polls with real-time percentage progress bars, multiple choices, and live voting updates.
 * **Q&A Module**: Submit questions, upvote popular questions, and mark questions as answered in real-time.
-* **Breakout Rooms**: Host-managed breakout room assignments and participant distribution.
 * **Floating Emoji Reactions**: Live floating reaction animations (💖, 👍, 👏, 😂, 😮, 🎉, etc.) rendered directly over video stages.
-* **Live Closed Captions (CC)**: Automated speech-to-text live subtitles.
+* **Live Captions (CC)**: Each speaker's browser transcribes their own microphone (Web Speech API) so captions carry the right name. Chrome, Edge and Safari; not Firefox.
 
 ### 📅 Scheduling & Google Sync
-* **Automated Google Mail Reminders**: Schedule meetings with automated invitation emails dispatched via Gmail SMTP to both the host and invited guests.
+* **Email Invitations & Reminders**: Invite people from inside a meeting or when scheduling. Sent through Brevo or Resend (HTTPS, works on Render) or SMTP; every recipient's delivery result is shown, never a fake success.
 * **Google Calendar & .ics Sync**: 1-click Google Calendar web event creation and universal `.ics` calendar file downloads.
 
 ### 🛡️ Host Moderation & Security
@@ -186,6 +185,38 @@ vit-connect/
 3. Open your browser at: `http://localhost:3000`
 
 
+## 🚢 Production Deployment (Render backend + Vercel frontend)
+
+Full details, including why each setting matters, are in
+[`IMPLEMENTATION_AND_CHANGELOG.md`](IMPLEMENTATION_AND_CHANGELOG.md#16-render-deployment).
+
+**Render (backend web service)**
+
+| Variable | Required | Notes |
+| :--- | :--- | :--- |
+| `FLASK_ENV` | yes | `production` |
+| `SECRET_KEY`, `JWT_SECRET_KEY` | yes | Long random strings. Changing `JWT_SECRET_KEY` logs everyone out. |
+| `DATABASE_URL` | **yes** | PostgreSQL URL (e.g. Render PostgreSQL "Internal Database URL"). Without it the app uses SQLite on Render's temporary disk and **loses all accounts on every restart/deploy**. |
+| `FRONTEND_URL` | yes | Public frontend URL, used in invitation links. |
+| `BREVO_API_KEY` or `RESEND_API_KEY` | for email | Render free instances block SMTP ports, so Gmail SMTP cannot work there. |
+| `EMAIL_FROM` | for email | Sender address verified with the email provider. |
+| `TURN_URLS`, `TURN_USERNAME`, `TURN_CREDENTIAL` | recommended | Needed for calls between strict/mobile networks. |
+
+Start command: `python app.py` (single process; live meeting state is held in memory).
+After deploying, open `https://<backend>/api/health`: it reports the database type,
+whether email is configured, whether TURN is configured, and any configuration warnings.
+
+**Vercel (frontend)**: set `VITE_API_URL` and `VITE_SOCKET_URL` to the backend URL and redeploy.
+
+## 🧪 Tests
+
+```bash
+python -m unittest discover -s tests -v   # backend: auth, presence, signaling, host controls, email
+npm run build                              # frontend production build
+```
+
+Browser end-to-end tests (three users, fake camera/mic): see [`tests/e2e/README.md`](tests/e2e/README.md).
+
 ## 🔌 API Reference & WebSocket Events
 
 ### REST Endpoints
@@ -193,32 +224,38 @@ vit-connect/
 | Method | Endpoint | Description |
 | :--- | :--- | :--- |
 | `POST` | `/api/auth/register` | Register a new user (`name`, `email`, `password`) |
-| `POST` | `/api/auth/login` | Log in and receive JWT access token |
+| `POST` | `/api/auth/login` | Log in and receive JWT access token (email is case-insensitive) |
 | `GET` | `/api/auth/verify` | Verify current JWT token session |
-| `GET` | `/api/meetings` | List all active/recent meetings for user |
-| `POST` | `/api/meetings/create` | Create an instant or named meeting room |
-| `POST` | `/api/meetings/schedule` | Schedule meeting with automated Gmail reminders & GCal links |
-| `GET` | `/api/meetings/scheduled` | List upcoming scheduled meetings |
-| `GET` | `/api/meetings/<id>` | Retrieve meeting metadata & details |
-| `POST` | `/api/meetings/<id>/send-reminder` | Trigger reminder emails to participants |
-| `GET` | `/api/meetings/<id>/calendar.ics` | Download standard iCalendar invite file |
+| `PUT` | `/api/auth/profile` | Update display name |
+| `GET` | `/api/health` | Deployment self-check (database, email, TURN, warnings) |
+| `GET` | `/api/ice-servers` | STUN/TURN configuration for WebRTC (authenticated) |
+| `GET` | `/api/meetings` | Meetings the user created or attended (with live participant count) |
+| `POST` | `/api/meetings/create` | Create an instant meeting |
+| `POST` | `/api/meetings/schedule` | Schedule a meeting; reports per-recipient email results |
+| `GET` | `/api/meetings/scheduled` | List scheduled meetings |
+| `GET` | `/api/meetings/<id-or-code>` | Meeting details (accepts id, code, or dashed code) |
+| `GET` | `/api/meetings/<id-or-code>/presence` | Who is in the live call right now |
+| `POST` | `/api/meetings/<id-or-code>/invite` | Email invitations (`emails`, `resend`); 200 / 207 partial / 502 failed |
+| `POST` | `/api/meetings/<id>/send-reminder` | Re-send scheduling emails (host only) |
+| `GET` | `/api/meetings/<id>/calendar.ics` | iCalendar invite file |
 
 ### Socket.IO Real-Time Events
 
 | Event | Direction | Description |
 | :--- | :--- | :--- |
-| `join_meeting` | Client -> Server | Join a meeting room by ID |
-| `current_users` | Server -> Client | Sends roster of active peers in room |
-| `user_joined` / `user_left` | Server -> Client | Participant arrival & departure notifications |
-| `offer` / `answer` | Bi-directional | WebRTC SDP negotiation for media & screen streams |
-| `ice_candidate` | Bi-directional | WebRTC ICE candidate routing |
-| `screen_share_status` | Bi-directional | Broadcast presenter status across room |
-| `chat_message` | Bi-directional | Real-time in-call text chat |
-| `send_reaction` | Bi-directional | Floating emoji reaction broadcast |
-| `whiteboard_draw` / `whiteboard_clear` | Bi-directional | Collaborative whiteboard stroke synchronization |
-| `create_poll` / `vote_poll` / `end_poll` | Bi-directional | Interactive live polling events |
-| `submit_qa` / `upvote_qa` / `answer_qa` | Bi-directional | Live Q&A questions and upvoting |
-| `host_action` | Bi-directional | Host moderation commands (`mute_all`, `mute_user`, `lock_toggle`, `end_meeting_for_all`) |
+| `watch_meeting` → `presence_update` | C→S / S→C | Pre-join lobby: live list of who is in the call |
+| `join_meeting` → `joined` | C→S / S→C | Join (by id, code or dashed code); reply has roster, chat history, activity state |
+| `roster_update` | S→C | Full authoritative participant list after every change |
+| `leave_meeting` | C→S | Leave immediately (also sent on page hide) |
+| `signal` | C↔S↔C | WebRTC SDP/ICE relay, only between members of the same meeting |
+| `media_state` / `toggle_hand` / `screen_share_status` | C→S | Per-participant state, reflected in `roster_update` |
+| `send_chat` → `chat_message` | C→S / S→C | Chat (persisted) |
+| `captions_toggle` → `captions_demand`, `live_caption` → `caption_received` | both | Live captions |
+| `send_reaction` → `user_reaction` | both | Emoji reactions |
+| `create_poll` / `vote_poll` / `end_poll` → `poll_updated` | both | Polls |
+| `submit_qa` / `upvote_qa` / `answer_qa` → `qa_updated` | both | Q&A |
+| `whiteboard_draw` / `whiteboard_clear` | both | Whiteboard |
+| `recording_status` → `recording_state_changed` | both | Local recording notice |
+| `host_action` → `host_command` / `meeting_ended` / `host_locks_updated` | both | Host moderation (verified server-side) |
 
 ---
-

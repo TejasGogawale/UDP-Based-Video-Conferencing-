@@ -41,7 +41,7 @@ export const createSyntheticVideoTrack = (userName = 'User') => {
 
     ctx.font = '13px monospace'
     ctx.fillStyle = 'rgba(255, 255, 255, 0.65)'
-    ctx.fillText(`Simulated Feed • ${new Date().toLocaleTimeString()}`, canvas.width / 2, canvas.height / 2 + 110)
+    ctx.fillText(`Development test pattern • ${new Date().toLocaleTimeString()}`, canvas.width / 2, canvas.height / 2 + 110)
 
     requestAnimationFrame(draw)
   }

@@ -9,14 +9,27 @@
 }
 
 html, body, #root {
-  height: 100%;
-  min-height: 100dvh;
+  min-height: 100%;
   width: 100%;
   -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
 }
 
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  overflow-x: hidden;
+}
+
 @layer utilities {
+  /* Exactly the visible viewport: 100vh is taller than the screen on mobile
+     browsers with dynamic toolbars; dvh tracks the real visible height. */
+  .h-app {
+    height: 100vh;
+    height: 100dvh;
+  }
   .pb-safe {
     padding-bottom: env(safe-area-inset-bottom, 0px);
   }
