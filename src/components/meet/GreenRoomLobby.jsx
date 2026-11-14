@@ -1,190 +1,154 @@
-import React, { useRef, useEffect, useState } from 'react'
-import {
-  Mic,
-  MicOff,
-  Video,
-  VideoOff,
-  Sparkles,
-  Settings,
-  Monitor,
-  Check,
-  Copy,
-  Users
-} from 'lucide-react'
+import React from 'react'
+import { Mic, MicOff, Video, VideoOff, Sparkles, Settings, Loader2, AlertTriangle, Users, WifiOff } from 'lucide-react'
+import { MediaVideo } from './media/MediaVideo'
+import { levelToPercent } from '../../lib/media/audioLevels'
+import { formatMeetingCode } from '../../lib/meetingCode'
+
+function presenceText({ known, count, participants }) {
+  if (!known) return 'Checking who is in the call…'
+  if (count === 0) return 'No one else is here yet'
+  const names = participants.map((p) => p.userName)
+  if (count === 1) return `${names[0]} is in this call`
+  if (count === 2) return `${names[0]} and ${names[1]} are in this call`
+  return `${names[0]}, ${names[1]} and ${count - 2} more are in this call`
+}
 
 export const GreenRoomLobby = ({
   stream,
-  audioEnabled = true,
-  videoEnabled = true,
+  audioEnabled,
+  videoEnabled,
+  micLevel = 0,
+  mediaReady,
+  mediaErrors = {},
   onToggleAudio,
   onToggleVideo,
   onJoinMeeting,
-  onJoinAsPresenter,
   onOpenSettings,
   onOpenEffects,
   meetingCode,
   meetingTitle,
-  activeParticipantsCount = 0,
+  presence,
+  joining,
+  socketStatus,
   userName = 'You',
-  visualEffect = 'none',
-  visualFilter = 'none'
+  effectActive
 }) => {
-  const videoRef = useRef(null)
-  const [audioLevel, setAudioLevel] = useState(0)
-
-  useEffect(() => {
-    if (videoRef.current && stream) {
-      videoRef.current.srcObject = stream
-    }
-  }, [stream])
-
-  // Simulated audio meter
-  useEffect(() => {
-    if (!audioEnabled) {
-      setAudioLevel(0)
-      return
-    }
-    const interval = setInterval(() => {
-      setAudioLevel(Math.random() * 50 + 15)
-    }, 120)
-    return () => clearInterval(interval)
-  }, [audioEnabled])
-
-  // Compute filter styling
-  let filterCss = ''
-  if (visualFilter === 'warm') filterCss = 'brightness(105%) contrast(105%) sepia(20%)'
-  else if (visualFilter === 'cool') filterCss = 'brightness(110%) hue-rotate(15deg)'
-  else if (visualFilter === 'noir') filterCss = 'grayscale(100%) contrast(120%)'
-  else if (visualFilter === 'vivid') filterCss = 'saturate(130%) contrast(110%)'
-
-  let blurClass = ''
-  if (visualEffect === 'blur-sm') blurClass = 'backdrop-blur-sm'
-  else if (visualEffect === 'blur-lg') blurClass = 'backdrop-blur-md'
-
-  const formattedCode = meetingCode
-    ? `${meetingCode.slice(0, 3)}-${meetingCode.slice(3, 7)}-${meetingCode.slice(7, 10)}`
-    : 'abc-defg-hij'
+  const hasVideo = videoEnabled && stream?.getVideoTracks().length > 0
+  const initial = (userName || 'U').charAt(0).toUpperCase()
 
   return (
-    <div className="min-h-[100dvh] bg-[#202124] text-white flex flex-col items-center justify-center p-4 sm:p-6 antialiased py-6">
-      <div className="max-w-5xl w-full grid lg:grid-cols-12 gap-6 sm:gap-8 items-center">
-        {/* Left Column: Interactive Camera Preview */}
-        <div className="lg:col-span-7 flex flex-col items-center w-full">
-          <div className="relative w-full aspect-video max-w-2xl bg-[#3c4043] rounded-2xl sm:rounded-3xl overflow-hidden shadow-2xl border border-[#3c4043]/80">
-            {videoEnabled && stream ? (
-              <video
-                ref={videoRef}
-                autoPlay
-                playsInline
-                muted
-                className={`w-full h-full object-cover -scale-x-100 ${blurClass}`}
-                style={{ filter: filterCss || undefined }}
-              />
-            ) : (
-              <div className="w-full h-full flex flex-col items-center justify-center bg-[#28292c] space-y-3">
-                <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-full bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center text-2xl sm:text-3xl font-bold text-white shadow-xl">
-                  {userName ? userName.charAt(0).toUpperCase() : 'U'}
+    <div className="h-app overflow-y-auto bg-[#202124] text-white pt-safe pb-safe">
+      <div className="min-h-full flex items-center justify-center p-4 sm:p-6">
+        <div className="max-w-5xl w-full grid lg:grid-cols-12 gap-6 lg:gap-10 items-center">
+          {/* Preview */}
+          <div className="lg:col-span-7 w-full">
+            <div className="relative w-full aspect-[4/3] sm:aspect-video max-h-[55dvh] lg:max-h-none mx-auto bg-[#3c4043] rounded-2xl sm:rounded-3xl overflow-hidden shadow-2xl">
+              {hasVideo ? (
+                <MediaVideo
+                  stream={stream}
+                  mirror
+                  fallback={
+                    <div className="w-full h-full flex items-center justify-center text-sm text-gray-300 gap-2">
+                      <Loader2 className="w-4 h-4 animate-spin" /> Starting camera…
+                    </div>
+                  }
+                />
+              ) : (
+                <div className="w-full h-full flex flex-col items-center justify-center bg-[#28292c] gap-3 px-6 text-center">
+                  {!mediaReady ? (
+                    <>
+                      <Loader2 className="w-8 h-8 animate-spin text-[#8ab4f8]" />
+                      <p className="text-sm text-gray-300">Waiting for camera and microphone permission…</p>
+                    </>
+                  ) : (
+                    <>
+                      <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-full bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center text-3xl font-semibold shadow-xl">{initial}</div>
+                      <p className="text-sm text-gray-400">Camera is off</p>
+                    </>
+                  )}
                 </div>
-                <p className="text-xs sm:text-sm font-medium text-gray-400">Camera is off</p>
+              )}
+
+              <div className="absolute top-3 left-3 px-2.5 py-1 bg-[#202124]/80 rounded-full text-xs text-gray-200">{userName}</div>
+
+              {effectActive && hasVideo && (
+                <div className="absolute top-3 right-3 px-2.5 py-1 bg-[#202124]/80 rounded-full text-xs text-[#c58af9] flex items-center gap-1">
+                  <Sparkles className="w-3 h-3" /> Effect on
+                </div>
+              )}
+
+              {/* Controls on the preview */}
+              <div className="absolute bottom-3 sm:bottom-4 inset-x-0 flex items-center justify-center gap-3">
+                <button
+                  onClick={onToggleAudio}
+                  className={`relative w-12 h-12 rounded-full flex items-center justify-center border border-white/20 ${audioEnabled ? 'bg-[#3c4043]/90 hover:bg-[#4a4e52]' : 'bg-[#ea4335] hover:bg-[#d93025]'}`}
+                  title={audioEnabled ? 'Turn off microphone' : 'Turn on microphone'}
+                  aria-label={audioEnabled ? 'Turn off microphone' : 'Turn on microphone'}
+                >
+                  {audioEnabled ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
+                  {audioEnabled && (
+                    <span className="absolute -bottom-1 left-2 right-2 h-1 rounded-full bg-black/40 overflow-hidden">
+                      <span className="block h-full bg-[#81c995] transition-all duration-150" style={{ width: `${levelToPercent(micLevel)}%` }} />
+                    </span>
+                  )}
+                </button>
+                <button
+                  onClick={onToggleVideo}
+                  className={`w-12 h-12 rounded-full flex items-center justify-center border border-white/20 ${videoEnabled ? 'bg-[#3c4043]/90 hover:bg-[#4a4e52]' : 'bg-[#ea4335] hover:bg-[#d93025]'}`}
+                  title={videoEnabled ? 'Turn off camera' : 'Turn on camera'}
+                  aria-label={videoEnabled ? 'Turn off camera' : 'Turn on camera'}
+                >
+                  {videoEnabled ? <Video className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
+                </button>
+                <button onClick={onOpenEffects} className="w-12 h-12 rounded-full flex items-center justify-center bg-[#3c4043]/90 hover:bg-[#4a4e52] border border-white/20" title="Backgrounds and effects" aria-label="Backgrounds and effects">
+                  <Sparkles className="w-5 h-5 text-[#c58af9]" />
+                </button>
+                <button onClick={onOpenSettings} className="w-12 h-12 rounded-full flex items-center justify-center bg-[#3c4043]/90 hover:bg-[#4a4e52] border border-white/20" title="Audio and video settings" aria-label="Audio and video settings">
+                  <Settings className="w-5 h-5" />
+                </button>
               </div>
-            )}
-
-            {/* Bottom Floating Pill Controls on Video */}
-            <div className="absolute bottom-3 sm:bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-1.5 sm:py-2 bg-[#202124]/85 backdrop-blur-md rounded-full border border-white/10 shadow-2xl">
-              {/* Mic Toggle */}
-              <button
-                onClick={onToggleAudio}
-                className={`p-2.5 sm:p-3 rounded-full transition-all ${
-                  audioEnabled
-                    ? 'bg-[#3c4043] hover:bg-[#4a4e52] text-white'
-                    : 'bg-[#ea4335] hover:bg-[#d93025] text-white'
-                }`}
-                title={audioEnabled ? 'Turn off mic' : 'Turn on mic'}
-              >
-                {audioEnabled ? <Mic className="w-4 h-4 sm:w-5 sm:h-5" /> : <MicOff className="w-4 h-4 sm:w-5 sm:h-5" />}
-              </button>
-
-              {/* Camera Toggle */}
-              <button
-                onClick={onToggleVideo}
-                className={`p-2.5 sm:p-3 rounded-full transition-all ${
-                  videoEnabled
-                    ? 'bg-[#3c4043] hover:bg-[#4a4e52] text-white'
-                    : 'bg-[#ea4335] hover:bg-[#d93025] text-white'
-                }`}
-                title={videoEnabled ? 'Turn off camera' : 'Turn on camera'}
-              >
-                {videoEnabled ? <Video className="w-4 h-4 sm:w-5 sm:h-5" /> : <VideoOff className="w-4 h-4 sm:w-5 sm:h-5" />}
-              </button>
-
-              {/* Effects Toggle */}
-              <button
-                onClick={onOpenEffects}
-                className="p-2.5 sm:p-3 bg-[#3c4043] hover:bg-[#4a4e52] text-white rounded-full transition-all"
-                title="Apply visual effects"
-              >
-                <Sparkles className="w-4 h-4 sm:w-5 sm:h-5 text-[#8ab4f8]" />
-              </button>
-
-              {/* Settings Toggle */}
-              <button
-                onClick={onOpenSettings}
-                className="p-2.5 sm:p-3 bg-[#3c4043] hover:bg-[#4a4e52] text-white rounded-full transition-all"
-                title="Audio and video settings"
-              >
-                <Settings className="w-4 h-4 sm:w-5 sm:h-5" />
-              </button>
             </div>
 
-            {/* Audio Wave Indicator on Top Right */}
-            {audioEnabled && (
-              <div className="absolute top-3 right-3 sm:top-4 sm:right-4 flex items-center gap-1.5 px-2.5 sm:px-3 py-1 sm:py-1.5 bg-[#202124]/80 backdrop-blur-md rounded-full border border-white/10">
-                <Mic className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-[#8ab4f8]" />
-                <div className="w-8 sm:w-12 h-1.5 bg-gray-700 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-[#8ab4f8] transition-all duration-100"
-                    style={{ width: `${audioLevel}%` }}
-                  />
-                </div>
+            {(mediaErrors.mic || mediaErrors.cam) && (
+              <div className="mt-3 space-y-2">
+                {[mediaErrors.mic, mediaErrors.cam].filter(Boolean).map((msg) => (
+                  <div key={msg} className="flex items-start gap-2 p-3 rounded-xl bg-[#ea4335]/10 border border-[#ea4335]/30 text-xs text-[#f6aea9]">
+                    <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                    <span>{msg}</span>
+                  </div>
+                ))}
               </div>
             )}
           </div>
-        </div>
 
-        {/* Right Column: Action Card */}
-        <div className="lg:col-span-5 flex flex-col items-center lg:items-start text-center lg:text-left space-y-5 sm:space-y-6 w-full">
-          <div className="space-y-1.5 sm:space-y-2">
-            <h1 className="text-2xl sm:text-3xl font-normal text-white">Ready to join?</h1>
-            <p className="text-xs sm:text-sm text-gray-400">
-              {activeParticipantsCount === 0
-                ? 'No one else is in this meeting yet'
-                : `${activeParticipantsCount} ${activeParticipantsCount === 1 ? 'person is' : 'people are'} in this call`}
-            </p>
-          </div>
+          {/* Join card */}
+          <div className="lg:col-span-5 flex flex-col items-center lg:items-start text-center lg:text-left gap-5">
+            <div className="space-y-2">
+              <h1 className="text-2xl sm:text-3xl font-normal">{meetingTitle ? meetingTitle : 'Ready to join?'}</h1>
+              <p className="text-sm text-gray-300 flex items-center justify-center lg:justify-start gap-2">
+                <Users className="w-4 h-4 text-[#8ab4f8]" />
+                <span aria-live="polite">{presenceText(presence)}</span>
+              </p>
+            </div>
 
-          <div className="flex flex-col sm:flex-row items-center gap-3 w-full max-w-sm">
-            {/* Primary Join Button */}
             <button
               onClick={onJoinMeeting}
-              className="w-full sm:flex-1 py-3.5 px-6 bg-[#8ab4f8] hover:bg-[#aecbfa] text-[#202124] font-semibold text-sm rounded-full transition-colors shadow-lg flex items-center justify-center gap-2"
+              disabled={joining || !mediaReady}
+              className="w-full max-w-xs py-3.5 px-6 bg-[#8ab4f8] hover:bg-[#aecbfa] disabled:bg-[#8ab4f8]/50 disabled:cursor-not-allowed text-[#202124] font-semibold text-sm rounded-full shadow-lg flex items-center justify-center gap-2"
             >
-              Join now
+              {joining ? <><Loader2 className="w-4 h-4 animate-spin" /> Joining…</> : 'Join now'}
             </button>
 
-            {/* Present Button */}
-            <button
-              onClick={onJoinAsPresenter}
-              className="w-full sm:w-auto py-3.5 px-5 bg-[#3c4043] hover:bg-[#4a4e52] text-white font-medium text-sm rounded-full transition-colors flex items-center justify-center gap-2"
-            >
-              <Monitor className="w-4 h-4 text-[#8ab4f8]" />
-              Present
-            </button>
-          </div>
+            {socketStatus !== 'connected' && (
+              <p className="text-xs text-[#fbbc04] flex items-center gap-1.5">
+                <WifiOff className="w-3.5 h-3.5" /> Connecting to the meeting server…
+              </p>
+            )}
 
-          {/* Meeting Info Details */}
-          <div className="pt-4 border-t border-[#3c4043] w-full max-w-sm space-y-1">
-            <p className="text-xs text-gray-400">Meeting code: <span className="font-mono text-gray-200">{formattedCode}</span></p>
-            <p className="text-xs text-gray-400">Title: <span className="text-gray-200">{meetingTitle || 'VIT Connect Conference'}</span></p>
+            <div className="pt-4 border-t border-[#3c4043] w-full max-w-xs space-y-1 text-xs text-gray-400">
+              <p>Meeting code: <span className="font-mono text-gray-200">{formatMeetingCode(meetingCode)}</span></p>
+              <p>You can present your screen after joining.</p>
+            </div>
           </div>
         </div>
       </div>

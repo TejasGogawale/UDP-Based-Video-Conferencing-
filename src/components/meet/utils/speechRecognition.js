@@ -1,79 +1,121 @@
-// Web Speech API integration for real-time speech-to-text Live Captions in VIT Connect
+// Live captions via the browser's Web Speech API.
+//
+// Each participant transcribes their OWN microphone and relays the text, so
+// captions are always attributed to the right speaker. Support varies:
+//   Chrome / Edge (desktop): supported (audio is sent to the browser vendor's speech service)
+//   Safari (macOS / iOS 14.5+): partial
+//   Firefox: not supported
+//   Chrome on Android: may pause while the microphone is held by the call
+
+const ERROR_MESSAGES = {
+  'not-allowed': 'Captions need microphone permission for speech recognition.',
+  'service-not-allowed': 'Speech recognition is blocked on this device or browser.',
+  'audio-capture': 'No microphone is available for captions.',
+  network: 'The speech recognition service is unreachable. Check your connection.',
+  'language-not-supported': 'Speech recognition does not support this language.'
+}
+const FATAL_ERRORS = new Set(['not-allowed', 'service-not-allowed', 'audio-capture', 'language-not-supported'])
+
+export const captionsSupported = () =>
+  typeof window !== 'undefined' && Boolean(window.SpeechRecognition || window.webkitSpeechRecognition)
 
 export class LiveCaptionService {
-  constructor(onCaptionCallback) {
+  /**
+   * onCaption({ text, isFinal }) - interim results REPLACE the previous interim
+   * text for the current utterance; a final result closes it.
+   * onError(message) - readable reason captions stopped or cannot start.
+   */
+  constructor(onCaption, onError) {
+    this.onCaption = onCaption
+    this.onError = onError || (() => {})
     this.recognition = null
-    this.isListening = false
-    this.onCaption = onCaptionCallback
+    this.wanted = false
+    this.running = false
+    this.restartTimer = null
+    this.restartDelay = 300
     this.init()
   }
 
   init() {
-    if (typeof window === 'undefined') return
+    if (!captionsSupported()) return
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
-    if (SpeechRecognition) {
-      this.recognition = new SpeechRecognition()
-      this.recognition.continuous = true
-      this.recognition.interimResults = true
-      this.recognition.lang = 'en-US'
+    const recognition = new SpeechRecognition()
+    recognition.continuous = true
+    recognition.interimResults = true
+    recognition.lang = navigator.language || 'en-US'
 
-      this.recognition.onresult = (event) => {
-        let interimTranscript = ''
-        let finalTranscript = ''
+    recognition.onstart = () => {
+      this.running = true
+      this.restartDelay = 300
+    }
 
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          if (event.results[i].isFinal) {
-            finalTranscript += event.results[i][0].transcript
-          } else {
-            interimTranscript += event.results[i][0].transcript
-          }
-        }
-
-        const text = finalTranscript || interimTranscript
-        if (text && this.onCaption) {
-          this.onCaption({
-            text: text.trim(),
-            isFinal: Boolean(finalTranscript)
-          })
+    recognition.onresult = (event) => {
+      // Report only what changed in this event. Results before resultIndex were
+      // already delivered; re-sending them is what caused duplicated captions.
+      let interim = ''
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const result = event.results[i]
+        const transcript = result[0]?.transcript?.trim()
+        if (!transcript) continue
+        if (result.isFinal) {
+          this.onCaption({ text: transcript, isFinal: true })
+        } else {
+          interim += (interim ? ' ' : '') + transcript
         }
       }
+      if (interim) this.onCaption({ text: interim, isFinal: false })
+    }
 
-      this.recognition.onerror = (event) => {
-        if (event.error !== 'no-speech') {
-          console.warn('Speech recognition error:', event.error)
-        }
+    recognition.onerror = (event) => {
+      if (event.error === 'no-speech' || event.error === 'aborted') return
+      if (FATAL_ERRORS.has(event.error)) {
+        this.wanted = false
+        this.onError(ERROR_MESSAGES[event.error])
+      } else if (event.error === 'network') {
+        this.restartDelay = Math.min(this.restartDelay * 2, 8000)
+        this.onError(ERROR_MESSAGES.network)
       }
+    }
 
-      this.recognition.onend = () => {
-        if (this.isListening) {
-          try {
-            this.recognition.start()
-          } catch (e) {
-            // Already started or suspended
-          }
-        }
+    recognition.onend = () => {
+      this.running = false
+      // The engine stops by itself after silence; keep it alive while wanted.
+      if (this.wanted) {
+        clearTimeout(this.restartTimer)
+        this.restartTimer = setTimeout(() => this.tryStart(), this.restartDelay)
       }
+    }
+
+    this.recognition = recognition
+  }
+
+  tryStart() {
+    if (!this.recognition || !this.wanted || this.running) return
+    try {
+      this.recognition.start()
+    } catch {
+      // start() throws if a session is still closing; onend will retry.
     }
   }
 
   start() {
-    if (this.recognition && !this.isListening) {
-      try {
-        this.isListening = true
-        this.recognition.start()
-      } catch (e) {
-        console.warn('Error starting speech recognition:', e)
-      }
+    if (!this.recognition) {
+      this.onError('Live captions are not supported by this browser. Use Chrome, Edge or Safari.')
+      return false
     }
+    this.wanted = true
+    this.tryStart()
+    return true
   }
 
   stop() {
-    if (this.recognition && this.isListening) {
-      this.isListening = false
+    this.wanted = false
+    clearTimeout(this.restartTimer)
+    if (this.recognition && this.running) {
       try {
         this.recognition.stop()
-      } catch (e) {
-        console.warn('Error stopping speech recognition:', e)
+      } catch {
+        // not running
       }
     }
   }

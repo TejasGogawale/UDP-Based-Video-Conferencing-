@@ -1,177 +1,109 @@
-import React, { useState, useEffect, useRef } from 'react'
-import {
-  X,
-  MessageSquare,
-  Send,
-  Lock,
-  Smile,
-  Info,
-  Pin
-} from 'lucide-react'
+import React, { useEffect, useRef, useState } from 'react'
+import { MessageSquare, Send, Lock, Info } from 'lucide-react'
+import { DrawerShell } from './DrawerShell'
 
-export const ChatDrawer = ({
-  onClose,
-  messages = [],
-  onSendMessage,
-  currentUser,
-  isHost,
-  isChatLocked,
-  onToggleChatLock
-}) => {
-  const [inputText, setInputText] = useState('')
-  const [showEmojis, setShowEmojis] = useState(false)
-  const messagesEndRef = useRef(null)
+const QUICK_EMOJIS = ['👍', '👏', '❤️', '😂', '🎉', '🔥', '🙌', '💡']
 
-  const quickEmojis = ['👍', '👏', '❤️', '😂', '🎉', '🔥', '🙌', '💡']
+const formatTime = (iso) => {
+  if (!iso) return ''
+  const date = new Date(iso)
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+
+export const ChatDrawer = ({ onClose, messages = [], onSendMessage, currentUserId, isHost, isChatLocked, onToggleChatLock }) => {
+  const [text, setText] = useState('')
+  const endRef = useRef(null)
+  const locked = isChatLocked && !isHost
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+    endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+  }, [messages.length])
 
-  const handleSubmit = (e) => {
+  const submit = (e) => {
     e?.preventDefault()
-    if (!inputText.trim() || isChatLocked) return
-    onSendMessage(inputText.trim())
-    setInputText('')
+    if (!text.trim() || locked) return
+    onSendMessage(text.trim())
+    setText('')
   }
 
-  const handleKeyDown = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      handleSubmit()
-    }
-  }
-
-  const addEmoji = (emoji) => {
-    setInputText(prev => prev + emoji)
-  }
-
-  return (
-    <div className="w-80 md:w-96 bg-[#202124] text-white flex flex-col h-full border-l border-[#3c4043] shadow-2xl z-30 animate-in slide-in-from-right duration-200">
-      {/* Header */}
-      <div className="flex items-center justify-between px-6 py-5 border-b border-[#3c4043]">
-        <div className="flex items-center gap-2">
-          <MessageSquare className="w-5 h-5 text-[#8ab4f8]" />
-          <h2 className="text-lg font-medium text-white">In-call messages</h2>
-        </div>
-        <button
-          onClick={onClose}
-          className="p-2 text-gray-400 hover:text-white hover:bg-[#3c4043] rounded-full transition-colors"
-          title="Close"
-        >
-          <X className="w-5 h-5" />
-        </button>
-      </div>
-
-      {/* Host Settings Banner (if host) */}
-      {isHost && (
-        <div className="px-6 py-3 bg-[#28292c] border-b border-[#3c4043] flex items-center justify-between">
-          <span className="text-xs font-medium text-gray-300">Let everyone send messages</span>
-          <button
-            onClick={() => onToggleChatLock && onToggleChatLock(!isChatLocked)}
-            className={`w-10 h-5 rounded-full transition-colors relative ${
-              !isChatLocked ? 'bg-[#8ab4f8]' : 'bg-gray-600'
-            }`}
-          >
-            <div
-              className={`w-4 h-4 rounded-full bg-white absolute top-0.5 transition-transform ${
-                !isChatLocked ? 'right-0.5' : 'left-0.5'
-              }`}
-            />
-          </button>
+  const footer = (
+    <div className="border-t border-[#3c4043] bg-[#202124] pb-safe">
+      {!locked && (
+        <div className="px-3 pt-2 flex items-center gap-1 overflow-x-auto">
+          {QUICK_EMOJIS.map((emoji) => (
+            <button key={emoji} type="button" onClick={() => setText((t) => t + emoji)} className="p-1 hover:bg-[#3c4043] rounded-lg text-base" aria-label={`Add ${emoji}`}>
+              {emoji}
+            </button>
+          ))}
         </div>
       )}
-
-      {/* Notice Banner */}
-      <div className="px-6 py-3 bg-[#28292c]/60 border-b border-[#3c4043]/50 text-xs text-gray-400 flex items-start gap-2">
-        <Info className="w-4 h-4 text-[#8ab4f8] shrink-0 mt-0.5" />
-        <p>Messages can only be seen by people in the call and are deleted when the call ends.</p>
-      </div>
-
-      {/* Chat Messages Body */}
-      <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
-        {messages.length === 0 ? (
-          <div className="h-full flex flex-col items-center justify-center text-center text-gray-400 space-y-2 py-12">
-            <MessageSquare className="w-10 h-10 text-gray-600 stroke-[1.5]" />
-            <p className="text-sm font-medium">No messages yet</p>
-            <p className="text-xs text-gray-500 max-w-[200px]">Send a message to everyone in this call</p>
-          </div>
-        ) : (
-          messages.map((msg, index) => {
-            const isSelf = msg.userId === currentUser?.sid || msg.authorId === currentUser?.id
-
-            return (
-              <div key={msg.id || index} className="space-y-1 group">
-                <div className="flex items-baseline justify-between">
-                  <span className="text-xs font-semibold text-gray-300">
-                    {isSelf ? 'You' : msg.userName || msg.author_name || 'Participant'}
-                  </span>
-                  <span className="text-[10px] text-gray-500">
-                    {msg.timestamp || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </span>
-                </div>
-                <div className={`p-3 rounded-2xl text-sm leading-relaxed ${
-                  isSelf
-                    ? 'bg-[#8ab4f8]/20 text-[#e8eaed] rounded-tr-none border border-[#8ab4f8]/30'
-                    : 'bg-[#28292c] text-white rounded-tl-none border border-[#3c4043]'
-                }`}>
-                  <p className="break-words whitespace-pre-wrap">{msg.message || msg.content}</p>
-                </div>
-              </div>
-            )
-          })
-        )}
-        <div ref={messagesEndRef} />
-      </div>
-
-      {/* Quick Emoji Bar */}
-      <div className="px-4 py-2 border-t border-[#3c4043]/50 flex items-center gap-1.5 overflow-x-auto">
-        {quickEmojis.map((emoji, i) => (
-          <button
-            key={i}
-            onClick={() => addEmoji(emoji)}
-            className="p-1 hover:bg-[#3c4043] rounded-lg text-base transition-transform hover:scale-125"
-            title={`Add ${emoji}`}
-          >
-            {emoji}
-          </button>
-        ))}
-      </div>
-
-      {/* Input Form */}
-      <div className="p-4 border-t border-[#3c4043] bg-[#202124]">
-        {isChatLocked ? (
+      <div className="p-3">
+        {locked ? (
           <div className="p-3 bg-red-950/20 border border-red-900/30 rounded-xl text-center text-xs text-[#f28b82] flex items-center justify-center gap-2">
-            <Lock className="w-4 h-4" />
-            Chat has been locked by the host
+            <Lock className="w-4 h-4" /> The host has turned off chat for participants
           </div>
         ) : (
-          <form onSubmit={handleSubmit} className="flex items-center gap-2">
-            <div className="relative flex-1">
-              <input
-                type="text"
-                value={inputText}
-                onChange={(e) => setInputText(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="Send a message to everyone"
-                className="w-full pl-4 pr-10 py-3 bg-[#28292c] border border-[#3c4043] rounded-full text-sm text-white placeholder-gray-400 focus:outline-none focus:border-[#8ab4f8] transition-colors"
-              />
-            </div>
-            <button
-              type="submit"
-              disabled={!inputText.trim()}
-              className={`p-3 rounded-full transition-all ${
-                inputText.trim()
-                  ? 'bg-[#8ab4f8] hover:bg-[#aecbfa] text-[#202124]'
-                  : 'bg-[#3c4043]/50 text-gray-500 cursor-not-allowed'
-              }`}
-              title="Send message"
-            >
+          <form onSubmit={submit} className="flex items-center gap-2">
+            <input
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              maxLength={2000}
+              placeholder="Send a message"
+              aria-label="Message"
+              className="flex-1 min-w-0 pl-4 pr-3 py-2.5 bg-[#28292c] border border-[#3c4043] rounded-full text-base sm:text-sm text-white placeholder-gray-400 focus:outline-none focus:border-[#8ab4f8]"
+            />
+            <button type="submit" disabled={!text.trim()} className="p-3 rounded-full bg-[#8ab4f8] hover:bg-[#aecbfa] text-[#202124] disabled:bg-[#3c4043]/50 disabled:text-gray-500" aria-label="Send message">
               <Send className="w-4 h-4" />
             </button>
           </form>
         )}
       </div>
     </div>
+  )
+
+  return (
+    <DrawerShell icon={MessageSquare} title="In-call messages" onClose={onClose} footer={footer}>
+      {isHost && (
+        <div className="px-5 py-3 bg-[#28292c] border-b border-[#3c4043] flex items-center justify-between">
+          <span className="text-xs font-medium text-gray-300">Let everyone send messages</span>
+          <button
+            onClick={() => onToggleChatLock(!isChatLocked)}
+            role="switch"
+            aria-checked={!isChatLocked}
+            className={`w-10 h-5 rounded-full relative ${!isChatLocked ? 'bg-[#8ab4f8]' : 'bg-gray-600'}`}
+          >
+            <span className={`w-4 h-4 rounded-full bg-white absolute top-0.5 transition-all ${!isChatLocked ? 'right-0.5' : 'left-0.5'}`} />
+          </button>
+        </div>
+      )}
+      <div className="px-5 py-3 bg-[#28292c]/60 border-b border-[#3c4043]/50 text-xs text-gray-400 flex items-start gap-2">
+        <Info className="w-4 h-4 text-[#8ab4f8] shrink-0 mt-0.5" />
+        <p>Messages are visible to everyone in the call and are kept with this meeting for people who join later.</p>
+      </div>
+      <div className="px-4 sm:px-5 py-4 space-y-4">
+        {messages.length === 0 ? (
+          <div className="flex flex-col items-center justify-center text-center text-gray-400 gap-2 py-12">
+            <MessageSquare className="w-10 h-10 text-gray-600" />
+            <p className="text-sm font-medium">No messages yet</p>
+          </div>
+        ) : (
+          messages.map((msg) => {
+            const mine = msg.authorId === currentUserId
+            return (
+              <div key={msg.id} className={`flex flex-col ${mine ? 'items-end' : 'items-start'}`}>
+                <div className="flex items-baseline gap-2 mb-1">
+                  <span className="text-xs font-semibold text-gray-300">{mine ? 'You' : msg.userName}</span>
+                  <span className="text-[10px] text-gray-500">{formatTime(msg.createdAt)}</span>
+                </div>
+                <div className={`max-w-[90%] px-3 py-2 rounded-2xl text-sm leading-relaxed ${mine ? 'bg-[#8ab4f8]/20 border border-[#8ab4f8]/30 rounded-tr-sm' : 'bg-[#28292c] border border-[#3c4043] rounded-tl-sm'}`}>
+                  <p className="break-words whitespace-pre-wrap">{msg.message}</p>
+                </div>
+              </div>
+            )
+          })
+        )}
+        <div ref={endRef} />
+      </div>
+    </DrawerShell>
   )
 }

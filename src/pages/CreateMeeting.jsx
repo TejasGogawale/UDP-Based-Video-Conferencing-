@@ -24,7 +24,7 @@ const CreateMeeting = () => {
         { title, description },
         { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }
       )
-      navigate(`/conference/${response.data.meeting.id}`)
+      navigate(`/conference/${response.data.meeting.meeting_code}`)
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to create meeting')
     } finally {

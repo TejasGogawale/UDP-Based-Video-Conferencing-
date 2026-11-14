@@ -22,6 +22,8 @@ export const API_ENDPOINTS = {
     scheduledList: `${API_BASE_URL}/api/meetings/scheduled`,
     getById: (id) => `${API_BASE_URL}/api/meetings/${id}`,
     sendReminder: (id) => `${API_BASE_URL}/api/meetings/${id}/send-reminder`,
+    invite: (id) => `${API_BASE_URL}/api/meetings/${id}/invite`,
+    presence: (id) => `${API_BASE_URL}/api/meetings/${id}/presence`,
     calendarIcs: (id) => `${API_BASE_URL}/api/meetings/${id}/calendar.ics`,
   }
 }

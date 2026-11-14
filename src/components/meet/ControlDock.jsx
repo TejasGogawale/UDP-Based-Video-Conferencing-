@@ -1,487 +1,273 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import {
-  Mic,
-  MicOff,
-  Video,
-  VideoOff,
-  PhoneOff,
-  Monitor,
-  StopCircle,
-  Hand,
-  Smile,
-  Sparkles,
-  PenTool,
-  MoreVertical,
-  Info,
-  Users,
-  MessageSquare,
-  Shapes,
-  Shield,
-  ClosedCaption,
-  Maximize,
-  Grid,
-  Copy,
-  Check,
-  X,
-  Settings,
-  HelpCircle,
-  BarChart2,
-  HelpCircle as QAIcon,
-  Layers
+  Mic, MicOff, Video, VideoOff, PhoneOff, Monitor, StopCircle, Hand, Smile, Sparkles, PenTool,
+  MoreVertical, Info, Users, MessageSquare, Shapes, Shield, ClosedCaption, Maximize, LayoutGrid,
+  Copy, Check, X, Settings, Circle
 } from 'lucide-react'
+import { formatMeetingCode, meetingLink } from '../../lib/meetingCode'
+
+const EMOJIS = ['💖', '👍', '👏', '😂', '😮', '😢', '🤔', '👎', '🎉']
+
+const RoundButton = ({ active, danger, onClick, title, children, className = '', badge }) => (
+  <button
+    onClick={onClick}
+    title={title}
+    aria-label={title}
+    aria-pressed={active}
+    className={`relative shrink-0 w-11 h-11 sm:w-12 sm:h-12 rounded-full flex items-center justify-center transition-colors shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-[#8ab4f8] ${
+      danger ? 'bg-[#ea4335] hover:bg-[#d93025] text-white' : active ? 'bg-[#8ab4f8] text-[#202124]' : 'bg-[#3c4043] hover:bg-[#4a4e52] text-white'
+    } ${className}`}
+  >
+    {children}
+    {badge}
+  </button>
+)
+
+const SheetItem = ({ icon: Icon, label, onClick, active, disabled, hint, tone = 'text-gray-200' }) => (
+  <button
+    onClick={onClick}
+    disabled={disabled}
+    className="p-3 bg-[#28292c] hover:bg-[#3c4043] disabled:opacity-50 disabled:hover:bg-[#28292c] rounded-xl flex flex-col items-center gap-1.5 text-[11px] leading-tight text-center min-h-[72px] justify-center"
+    title={hint || label}
+  >
+    <Icon className={`w-5 h-5 ${active ? 'text-[#8ab4f8]' : tone}`} />
+    <span>{label}</span>
+  </button>
+)
 
 export const ControlDock = ({
   meetingCode,
   currentTime = new Date(),
-  audioEnabled = true,
-  videoEnabled = true,
+  audioEnabled,
+  videoEnabled,
   onToggleAudio,
   onToggleVideo,
-  isScreenSharing = false,
+  isScreenSharing,
+  canShareScreen,
   onToggleScreenShare,
-  handRaised = false,
+  handRaised,
   onToggleHand,
-  captionsEnabled = false,
+  captionsEnabled,
   onToggleCaptions,
   onSendReaction,
-  activeDrawer = null, // 'info' | 'people' | 'chat' | 'activities' | 'host' | 'effects'
+  activeDrawer,
   onToggleDrawer,
   participantsCount = 1,
   unreadMessages = 0,
-  isHost = false,
+  isHost,
   onLeaveCall,
   onOpenSettings,
   onOpenWhiteboard,
-  layoutMode = 'auto',
-  onSelectLayout
+  hasPresentation,
+  layoutMode,
+  onSelectLayout,
+  isRecording,
+  onToggleRecording
 }) => {
-  const [showReactionsMenu, setShowReactionsMenu] = useState(false)
-  const [showMoreMenu, setShowMoreMenu] = useState(false)
-  const [copiedCode, setCopiedCode] = useState(false)
+  const [showReactions, setShowReactions] = useState(false)
+  const [showMore, setShowMore] = useState(false)
+  const [copied, setCopied] = useState(false)
 
-  const emojis = ['💖', '👍', '👏', '😂', '😮', '😢', '🤔', '👎', '🎉']
+  useEffect(() => {
+    if (!showMore && !showReactions) return undefined
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        setShowMore(false)
+        setShowReactions(false)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [showMore, showReactions])
 
-  const handleCopyCode = () => {
-    if (!meetingCode) return
-    navigator.clipboard.writeText(meetingCode)
-    setCopiedCode(true)
-    setTimeout(() => setCopiedCode(false), 2000)
+  const copyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(meetingLink(meetingCode))
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      // Clipboard blocked; the info drawer shows the link for manual copy.
+      onToggleDrawer('info')
+    }
   }
 
-  const formattedCode = meetingCode
-    ? `${meetingCode.slice(0, 3)}-${meetingCode.slice(3, 7)}-${meetingCode.slice(7, 10)}`
-    : 'abc-defg-hij'
+  const run = (fn) => () => {
+    setShowMore(false)
+    fn?.()
+  }
 
-  const timeString = currentTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })
+  const time = currentTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  const layoutLabel = layoutMode === 'gallery' ? 'Gallery' : layoutMode === 'spotlight' ? 'Spotlight' : 'Auto'
+  const nextLayout = layoutMode === 'auto' ? 'gallery' : layoutMode === 'gallery' ? 'spotlight' : 'auto'
 
   return (
-    <div className="bg-[#202124] px-3 sm:px-6 py-2.5 sm:py-0 sm:h-20 flex items-center justify-between z-40 select-none border-t border-[#3c4043]/60 relative pb-safe">
-      {/* 1. Left Section: Meeting Time & Code Info (Desktop only) */}
-      <div className="hidden lg:flex items-center gap-3 text-white text-sm">
-        <span className="font-medium tracking-tight text-gray-200">{timeString}</span>
-        <span className="text-gray-500">|</span>
-        <button
-          onClick={handleCopyCode}
-          className="flex items-center gap-1.5 px-2.5 py-1 hover:bg-[#3c4043] rounded-lg text-xs font-mono text-gray-300 hover:text-white transition-colors"
-          title="Click to copy meeting code"
-        >
-          <span>{formattedCode}</span>
-          {copiedCode ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5 text-gray-400" />}
-        </button>
+    <div className="relative z-40 bg-[#202124] border-t border-[#3c4043]/60 pb-safe pl-safe pr-safe">
+      <div className="h-16 sm:h-20 px-2 sm:px-4 flex items-center justify-between gap-2">
+        {/* Left: time and code (desktop) */}
+        <div className="hidden lg:flex items-center gap-3 text-sm text-gray-200 min-w-0 w-64">
+          <span className="font-medium">{time}</span>
+          <span className="text-gray-500">|</span>
+          <button onClick={copyLink} className="flex items-center gap-1.5 px-2 py-1 hover:bg-[#3c4043] rounded-lg text-xs font-mono text-gray-300 truncate" title="Copy meeting link">
+            <span className="truncate">{formatMeetingCode(meetingCode)}</span>
+            {copied ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
+          </button>
+        </div>
+
+        {/* Center: primary controls */}
+        <div className="flex-1 lg:flex-none flex items-center justify-center gap-2 sm:gap-3">
+          <RoundButton danger={!audioEnabled} onClick={onToggleAudio} title={audioEnabled ? 'Turn off microphone (Ctrl+D)' : 'Turn on microphone (Ctrl+D)'}>
+            {audioEnabled ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
+          </RoundButton>
+          <RoundButton danger={!videoEnabled} onClick={onToggleVideo} title={videoEnabled ? 'Turn off camera (Ctrl+E)' : 'Turn on camera (Ctrl+E)'}>
+            {videoEnabled ? <Video className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
+          </RoundButton>
+
+          <RoundButton className="hidden md:flex" active={captionsEnabled} onClick={onToggleCaptions} title={captionsEnabled ? 'Turn off captions' : 'Turn on captions'}>
+            <ClosedCaption className="w-5 h-5" />
+          </RoundButton>
+
+          <div className="relative hidden sm:block">
+            <RoundButton active={showReactions} onClick={() => setShowReactions((v) => !v)} title="Send a reaction">
+              <Smile className="w-5 h-5" />
+            </RoundButton>
+            {showReactions && (
+              <div className="absolute bottom-14 left-1/2 -translate-x-1/2 bg-[#202124] border border-[#3c4043] rounded-full p-1.5 shadow-2xl flex items-center gap-0.5 z-50">
+                {EMOJIS.map((emoji) => (
+                  <button key={emoji} onClick={() => { onSendReaction(emoji); setShowReactions(false) }} className="p-1.5 hover:bg-[#3c4043] rounded-full text-lg hover:scale-125 transition-transform" aria-label={`React ${emoji}`}>
+                    {emoji}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <RoundButton
+            className="hidden sm:flex"
+            active={isScreenSharing}
+            onClick={onToggleScreenShare}
+            title={isScreenSharing ? 'Stop presenting' : canShareScreen ? 'Present now' : 'Screen sharing is not available in this browser'}
+          >
+            {isScreenSharing ? <StopCircle className="w-5 h-5" /> : <Monitor className="w-5 h-5" />}
+          </RoundButton>
+
+          <RoundButton className="hidden sm:flex" active={handRaised} onClick={onToggleHand} title={handRaised ? 'Lower hand' : 'Raise hand'}>
+            <Hand className={`w-5 h-5 ${handRaised ? 'fill-current' : ''}`} />
+          </RoundButton>
+
+          {/* Chat sits in the primary row on phones. */}
+          <RoundButton
+            className="sm:hidden"
+            active={activeDrawer === 'chat'}
+            onClick={() => onToggleDrawer('chat')}
+            title="Chat"
+            badge={unreadMessages > 0 && (
+              <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-[#8ab4f8] text-[#202124] text-[10px] font-bold flex items-center justify-center">
+                {unreadMessages > 9 ? '9+' : unreadMessages}
+              </span>
+            )}
+          >
+            <MessageSquare className="w-5 h-5" />
+          </RoundButton>
+
+          <RoundButton active={showMore} onClick={() => setShowMore((v) => !v)} title="More options">
+            <MoreVertical className="w-5 h-5" />
+          </RoundButton>
+
+          <button
+            onClick={onLeaveCall}
+            title="Leave call"
+            aria-label="Leave call"
+            className="shrink-0 h-11 sm:h-12 px-5 sm:px-6 bg-[#ea4335] hover:bg-[#d93025] text-white rounded-full flex items-center justify-center shadow-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-white"
+          >
+            <PhoneOff className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Right: panels (tablet/desktop) */}
+        <div className="hidden sm:flex items-center gap-0.5 lg:w-64 lg:justify-end">
+          {[
+            { id: 'info', icon: Info, title: 'Meeting details' },
+            { id: 'people', icon: Users, title: 'People', count: participantsCount },
+            { id: 'chat', icon: MessageSquare, title: 'Chat', dot: unreadMessages > 0 },
+            { id: 'activities', icon: Shapes, title: 'Activities' },
+            ...(isHost ? [{ id: 'host', icon: Shield, title: 'Host controls' }] : [])
+          ].map(({ id, icon: Icon, title, count, dot }) => (
+            <button
+              key={id}
+              onClick={() => onToggleDrawer(id)}
+              title={title}
+              aria-label={title}
+              className={`relative p-2.5 rounded-full transition-colors ${activeDrawer === id ? 'text-[#8ab4f8] bg-[#8ab4f8]/20' : 'text-gray-300 hover:text-white hover:bg-[#3c4043]'}`}
+            >
+              <Icon className="w-5 h-5" />
+              {count > 0 && (
+                <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 bg-[#5f6368] rounded-full text-[10px] font-bold text-white flex items-center justify-center">{count}</span>
+              )}
+              {dot && <span className="absolute top-1.5 right-1.5 w-2.5 h-2.5 bg-[#8ab4f8] rounded-full" />}
+            </button>
+          ))}
+        </div>
       </div>
 
-      {/* 2. Center Section: Main Controls */}
-      <div className="flex items-center justify-center gap-1.5 sm:gap-2.5 md:gap-3 mx-auto max-w-full">
-        {/* Microphone Toggle */}
-        <button
-          onClick={onToggleAudio}
-          className={`p-2.5 sm:p-3 md:p-3.5 rounded-full transition-all duration-200 shadow-md ${
-            audioEnabled
-              ? 'bg-[#3c4043] hover:bg-[#474a4d] text-white'
-              : 'bg-[#ea4335] hover:bg-[#d93025] text-white ring-2 ring-red-400/20'
-          }`}
-          title={audioEnabled ? 'Turn off microphone (Ctrl+D)' : 'Turn on microphone (Ctrl+D)'}
-        >
-          {audioEnabled ? <Mic className="w-4 h-4 sm:w-5 sm:h-5" /> : <MicOff className="w-4 h-4 sm:w-5 sm:h-5" />}
-        </button>
-
-        {/* Camera Toggle */}
-        <button
-          onClick={onToggleVideo}
-          className={`p-2.5 sm:p-3 md:p-3.5 rounded-full transition-all duration-200 shadow-md ${
-            videoEnabled
-              ? 'bg-[#3c4043] hover:bg-[#474a4d] text-white'
-              : 'bg-[#ea4335] hover:bg-[#d93025] text-white ring-2 ring-red-400/20'
-          }`}
-          title={videoEnabled ? 'Turn off camera (Ctrl+E)' : 'Turn on camera (Ctrl+E)'}
-        >
-          {videoEnabled ? <Video className="w-4 h-4 sm:w-5 sm:h-5" /> : <VideoOff className="w-4 h-4 sm:w-5 sm:h-5" />}
-        </button>
-
-        {/* Captions CC Toggle (Desktop/Tablet) */}
-        <button
-          onClick={onToggleCaptions}
-          className={`hidden md:flex p-3 md:p-3.5 rounded-full transition-all duration-200 shadow-md ${
-            captionsEnabled
-              ? 'bg-[#8ab4f8] text-[#202124]'
-              : 'bg-[#3c4043] hover:bg-[#474a4d] text-white'
-          }`}
-          title={captionsEnabled ? 'Turn off captions' : 'Turn on captions (c)'}
-        >
-          <ClosedCaption className="w-5 h-5" />
-        </button>
-
-        {/* Reactions Emoji Button */}
-        <div className="relative">
-          <button
-            onClick={() => setShowReactionsMenu(!showReactionsMenu)}
-            className={`p-2.5 sm:p-3 md:p-3.5 rounded-full transition-all duration-200 shadow-md ${
-              showReactionsMenu
-                ? 'bg-[#8ab4f8] text-[#202124]'
-                : 'bg-[#3c4043] hover:bg-[#474a4d] text-white'
-            }`}
-            title="Send a reaction"
+      {showMore && (
+        <>
+          <div className="fixed inset-0 z-40 bg-black/50 sm:bg-transparent" onClick={() => setShowMore(false)} />
+          <div
+            role="dialog"
+            aria-label="More options"
+            className="fixed sm:absolute z-50 inset-x-0 bottom-0 sm:inset-x-auto sm:bottom-20 sm:right-4 lg:right-72 sm:w-80 bg-[#202124] border-t sm:border border-[#3c4043] rounded-t-3xl sm:rounded-2xl shadow-2xl p-4 max-h-[75dvh] overflow-y-auto pb-[calc(1rem+env(safe-area-inset-bottom))] sm:pb-4"
           >
-            <Smile className="w-4 h-4 sm:w-5 sm:h-5" />
-          </button>
+            <div className="flex items-center justify-between mb-3">
+              <span className="font-semibold text-sm text-white">Meeting options</span>
+              <button onClick={() => setShowMore(false)} className="p-1.5 text-gray-400 hover:text-white rounded-full" aria-label="Close">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
 
-          {/* Floating Emoji Picker Popup */}
-          {showReactionsMenu && (
-            <div className="absolute bottom-14 sm:bottom-16 left-1/2 -translate-x-1/2 bg-[#202124] border border-[#3c4043] rounded-full p-1.5 shadow-2xl flex items-center gap-1 z-50 animate-in zoom-in-95 duration-100 max-w-[90vw] overflow-x-auto">
-              {emojis.map((emoji) => (
-                <button
-                  key={emoji}
-                  onClick={() => {
-                    onSendReaction(emoji)
-                    setShowReactionsMenu(false)
-                  }}
-                  className="p-1.5 sm:p-2 hover:bg-[#3c4043] rounded-full text-base sm:text-lg hover:scale-125 transition-transform"
-                >
+            {/* Reactions (phones) */}
+            <div className="sm:hidden flex items-center justify-between gap-1 mb-3 p-1.5 bg-[#28292c] rounded-2xl">
+              {EMOJIS.slice(0, 7).map((emoji) => (
+                <button key={emoji} onClick={run(() => onSendReaction(emoji))} className="flex-1 py-1.5 text-xl rounded-xl hover:bg-[#3c4043]" aria-label={`React ${emoji}`}>
                   {emoji}
                 </button>
               ))}
             </div>
-          )}
-        </div>
 
-        {/* Screen Share / Present (Hidden on very small screens, accessible via More Menu) */}
-        <button
-          onClick={onToggleScreenShare}
-          className={`hidden sm:flex p-3 md:p-3.5 rounded-full transition-all duration-200 shadow-md ${
-            isScreenSharing
-              ? 'bg-[#8ab4f8] text-[#202124]'
-              : 'bg-[#3c4043] hover:bg-[#474a4d] text-white'
-          }`}
-          title={isScreenSharing ? 'Stop presenting' : 'Present now'}
-        >
-          {isScreenSharing ? <StopCircle className="w-5 h-5" /> : <Monitor className="w-5 h-5" />}
-        </button>
-
-        {/* Raise Hand Toggle */}
-        <button
-          onClick={onToggleHand}
-          className={`p-2.5 sm:p-3 md:p-3.5 rounded-full transition-all duration-200 shadow-md ${
-            handRaised
-              ? 'bg-[#fbbc04] text-[#202124] ring-2 sm:ring-4 ring-[#fbbc04]/20 font-bold'
-              : 'bg-[#3c4043] hover:bg-[#474a4d] text-white'
-          }`}
-          title={handRaised ? 'Lower hand' : 'Raise hand'}
-        >
-          <Hand className={`w-4 h-4 sm:w-5 sm:h-5 ${handRaised ? 'fill-current' : ''}`} />
-        </button>
-
-        {/* Visual Effects ✨ (Desktop) */}
-        <button
-          onClick={() => onToggleDrawer('effects')}
-          className={`hidden lg:flex p-3 md:p-3.5 rounded-full transition-all duration-200 shadow-md ${
-            activeDrawer === 'effects'
-              ? 'bg-[#8ab4f8] text-[#202124]'
-              : 'bg-[#3c4043] hover:bg-[#474a4d] text-white'
-          }`}
-          title="Apply visual effects & background blur"
-        >
-          <Sparkles className="w-5 h-5" />
-        </button>
-
-        {/* Whiteboard 📝 (Desktop) */}
-        <button
-          onClick={onOpenWhiteboard}
-          className="hidden lg:flex p-3 md:p-3.5 rounded-full bg-[#3c4043] hover:bg-[#474a4d] text-white transition-all duration-200 shadow-md"
-          title="Open collaborative whiteboard"
-        >
-          <PenTool className="w-5 h-5" />
-        </button>
-
-        {/* Chat Button directly on mobile bar for fast access */}
-        <button
-          onClick={() => onToggleDrawer(activeDrawer === 'chat' ? null : 'chat')}
-          className={`sm:hidden p-2.5 rounded-full transition-all relative ${
-            activeDrawer === 'chat' ? 'bg-[#8ab4f8] text-[#202124]' : 'bg-[#3c4043] text-white'
-          }`}
-          title="Chat"
-        >
-          <MessageSquare className="w-4 h-4" />
-          {unreadMessages > 0 && (
-            <span className="absolute top-0 right-0 w-2.5 h-2.5 bg-[#8ab4f8] rounded-full animate-ping" />
-          )}
-        </button>
-
-        {/* More Options ︙ */}
-        <div className="relative">
-          <button
-            onClick={() => setShowMoreMenu(!showMoreMenu)}
-            className={`p-2.5 sm:p-3 md:p-3.5 rounded-full transition-all duration-200 shadow-md ${
-              showMoreMenu
-                ? 'bg-[#8ab4f8] text-[#202124]'
-                : 'bg-[#3c4043] hover:bg-[#474a4d] text-white'
-            }`}
-            title="More options"
-          >
-            <MoreVertical className="w-4 h-4 sm:w-5 sm:h-5" />
-          </button>
-
-          {/* Mobile Bottom Sheet & Desktop Dropdown for More Options */}
-          {showMoreMenu && (
-            <>
-              {/* Mobile Backdrop */}
-              <div
-                className="fixed inset-0 bg-black/60 backdrop-blur-xs z-50 sm:hidden"
-                onClick={() => setShowMoreMenu(false)}
+            <div className="grid grid-cols-3 gap-2">
+              <SheetItem
+                icon={isScreenSharing ? StopCircle : Monitor}
+                label={isScreenSharing ? 'Stop presenting' : 'Share screen'}
+                active={isScreenSharing}
+                onClick={run(onToggleScreenShare)}
+                hint={canShareScreen ? undefined : 'Mobile browsers cannot share their screen'}
               />
-
-              <div className="fixed sm:absolute bottom-0 sm:bottom-16 left-0 sm:left-auto right-0 sm:right-0 w-full sm:w-72 bg-[#202124] border-t sm:border border-[#3c4043] rounded-t-3xl sm:rounded-2xl shadow-2xl p-4 sm:p-2 z-50 text-white animate-in slide-in-from-bottom sm:zoom-in-95 duration-150 max-h-[85vh] overflow-y-auto">
-                <div className="sm:hidden flex items-center justify-between pb-3 mb-2 border-b border-[#3c4043]">
-                  <span className="font-semibold text-sm">Meeting Options</span>
-                  <button
-                    onClick={() => setShowMoreMenu(false)}
-                    className="p-1 text-gray-400 hover:text-white rounded-full"
-                  >
-                    <X className="w-5 h-5" />
-                  </button>
-                </div>
-
-                {/* Mobile Quick Action Grid */}
-                <div className="grid grid-cols-3 gap-2 sm:hidden pb-3 mb-3 border-b border-[#3c4043]">
-                  <button
-                    onClick={() => {
-                      onToggleScreenShare()
-                      setShowMoreMenu(false)
-                    }}
-                    className="p-2.5 bg-[#28292c] hover:bg-[#3c4043] rounded-xl flex flex-col items-center gap-1.5 text-[11px] text-center"
-                  >
-                    <Monitor className={`w-5 h-5 ${isScreenSharing ? 'text-[#8ab4f8]' : 'text-gray-300'}`} />
-                    <span>{isScreenSharing ? 'Stop Present' : 'Share Screen'}</span>
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      onToggleCaptions()
-                      setShowMoreMenu(false)
-                    }}
-                    className="p-2.5 bg-[#28292c] hover:bg-[#3c4043] rounded-xl flex flex-col items-center gap-1.5 text-[11px] text-center"
-                  >
-                    <ClosedCaption className={`w-5 h-5 ${captionsEnabled ? 'text-[#8ab4f8]' : 'text-gray-300'}`} />
-                    <span>Captions</span>
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      onOpenWhiteboard()
-                      setShowMoreMenu(false)
-                    }}
-                    className="p-2.5 bg-[#28292c] hover:bg-[#3c4043] rounded-xl flex flex-col items-center gap-1.5 text-[11px] text-center"
-                  >
-                    <PenTool className="w-5 h-5 text-[#8ab4f8]" />
-                    <span>Whiteboard</span>
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      onToggleDrawer('effects')
-                      setShowMoreMenu(false)
-                    }}
-                    className="p-2.5 bg-[#28292c] hover:bg-[#3c4043] rounded-xl flex flex-col items-center gap-1.5 text-[11px] text-center"
-                  >
-                    <Sparkles className="w-5 h-5 text-purple-400" />
-                    <span>Effects</span>
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      onToggleDrawer('people')
-                      setShowMoreMenu(false)
-                    }}
-                    className="p-2.5 bg-[#28292c] hover:bg-[#3c4043] rounded-xl flex flex-col items-center gap-1.5 text-[11px] text-center"
-                  >
-                    <Users className="w-5 h-5 text-blue-400" />
-                    <span>People ({participantsCount})</span>
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      onToggleDrawer('activities')
-                      setShowMoreMenu(false)
-                    }}
-                    className="p-2.5 bg-[#28292c] hover:bg-[#3c4043] rounded-xl flex flex-col items-center gap-1.5 text-[11px] text-center"
-                  >
-                    <Shapes className="w-5 h-5 text-emerald-400" />
-                    <span>Activities</span>
-                  </button>
-
-                  {isHost && (
-                    <button
-                      onClick={() => {
-                        onToggleDrawer('host')
-                        setShowMoreMenu(false)
-                      }}
-                      className="p-2.5 bg-[#28292c] hover:bg-[#3c4043] rounded-xl flex flex-col items-center gap-1.5 text-[11px] text-center"
-                    >
-                      <Shield className="w-5 h-5 text-yellow-400" />
-                      <span>Host Tools</span>
-                    </button>
-                  )}
-
-                  <button
-                    onClick={() => {
-                      onToggleDrawer('info')
-                      setShowMoreMenu(false)
-                    }}
-                    className="p-2.5 bg-[#28292c] hover:bg-[#3c4043] rounded-xl flex flex-col items-center gap-1.5 text-[11px] text-center"
-                  >
-                    <Info className="w-5 h-5 text-gray-300" />
-                    <span>Meeting Info</span>
-                  </button>
-
-                  <button
-                    onClick={handleCopyCode}
-                    className="p-2.5 bg-[#28292c] hover:bg-[#3c4043] rounded-xl flex flex-col items-center gap-1.5 text-[11px] text-center"
-                  >
-                    <Copy className="w-5 h-5 text-gray-300" />
-                    <span>{copiedCode ? 'Copied!' : 'Copy Code'}</span>
-                  </button>
-                </div>
-
-                {/* Common List Items */}
-                <div className="space-y-1">
-                  <button
-                    onClick={() => {
-                      onSelectLayout(layoutMode === 'tiled' ? 'spotlight' : 'tiled')
-                      setShowMoreMenu(false)
-                    }}
-                    className="w-full px-3.5 py-2.5 hover:bg-[#3c4043] rounded-xl text-left text-xs font-medium flex items-center gap-3 transition-colors"
-                  >
-                    <Grid className="w-4 h-4 text-[#8ab4f8]" />
-                    <span>Change layout ({layoutMode})</span>
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      if (!document.fullscreenElement) {
-                        document.documentElement.requestFullscreen().catch(() => {})
-                      } else {
-                        document.exitFullscreen().catch(() => {})
-                      }
-                      setShowMoreMenu(false)
-                    }}
-                    className="w-full px-3.5 py-2.5 hover:bg-[#3c4043] rounded-xl text-left text-xs font-medium flex items-center gap-3 transition-colors"
-                  >
-                    <Maximize className="w-4 h-4 text-[#8ab4f8]" />
-                    <span>Full screen</span>
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      onOpenSettings()
-                      setShowMoreMenu(false)
-                    }}
-                    className="w-full px-3.5 py-2.5 hover:bg-[#3c4043] rounded-xl text-left text-xs font-medium flex items-center gap-3 transition-colors border-t border-[#3c4043]/60 pt-2"
-                  >
-                    <Settings className="w-4 h-4 text-[#8ab4f8]" />
-                    <span>Audio & video settings</span>
-                  </button>
-                </div>
-              </div>
-            </>
-          )}
-        </div>
-
-        {/* Leave Meeting Button */}
-        <button
-          onClick={onLeaveCall}
-          className="px-3.5 sm:px-5 py-2.5 sm:py-3 md:py-3.5 bg-[#ea4335] hover:bg-[#d93025] text-white rounded-full flex items-center justify-center gap-1.5 font-semibold text-xs transition-all duration-200 shadow-lg ring-2 sm:ring-4 ring-red-500/20"
-          title="Leave call"
-        >
-          <PhoneOff className="w-4 h-4 sm:w-5 sm:h-5 fill-current" />
-        </button>
-      </div>
-
-      {/* 3. Right Section: Slide-Over Drawer Toggles (Hidden on mobile, accessible via dock or more menu) */}
-      <div className="hidden sm:flex items-center gap-1 md:gap-1.5 text-white">
-        {/* Info Drawer */}
-        <button
-          onClick={() => onToggleDrawer('info')}
-          className={`p-2.5 md:p-3 rounded-full transition-colors ${
-            activeDrawer === 'info' ? 'text-[#8ab4f8] bg-[#8ab4f8]/20' : 'text-gray-400 hover:text-white hover:bg-[#3c4043]'
-          }`}
-          title="Meeting details"
-        >
-          <Info className="w-5 h-5" />
-        </button>
-
-        {/* People Drawer */}
-        <button
-          onClick={() => onToggleDrawer('people')}
-          className={`p-2.5 md:p-3 rounded-full transition-colors relative ${
-            activeDrawer === 'people' ? 'text-[#8ab4f8] bg-[#8ab4f8]/20' : 'text-gray-400 hover:text-white hover:bg-[#3c4043]'
-          }`}
-          title="People"
-        >
-          <Users className="w-5 h-5" />
-          {participantsCount > 0 && (
-            <span className="absolute top-1 right-1 px-1.5 py-0.2 bg-[#3c4043] border border-white/20 rounded-full text-[10px] font-bold text-gray-200">
-              {participantsCount}
-            </span>
-          )}
-        </button>
-
-        {/* Chat Drawer */}
-        <button
-          onClick={() => onToggleDrawer('chat')}
-          className={`p-2.5 md:p-3 rounded-full transition-colors relative ${
-            activeDrawer === 'chat' ? 'text-[#8ab4f8] bg-[#8ab4f8]/20' : 'text-gray-400 hover:text-white hover:bg-[#3c4043]'
-          }`}
-          title="Chat with everyone"
-        >
-          <MessageSquare className="w-5 h-5" />
-          {unreadMessages > 0 && (
-            <span className="absolute top-1 right-1 w-2.5 h-2.5 bg-[#8ab4f8] rounded-full animate-ping" />
-          )}
-        </button>
-
-        {/* Activities Drawer */}
-        <button
-          onClick={() => onToggleDrawer('activities')}
-          className={`p-2.5 md:p-3 rounded-full transition-colors ${
-            activeDrawer === 'activities' ? 'text-[#8ab4f8] bg-[#8ab4f8]/20' : 'text-gray-400 hover:text-white hover:bg-[#3c4043]'
-          }`}
-          title="Activities"
-        >
-          <Shapes className="w-5 h-5" />
-        </button>
-
-        {/* Host Controls (Visible only if host) */}
-        {isHost && (
-          <button
-            onClick={() => onToggleDrawer('host')}
-            className={`p-2.5 md:p-3 rounded-full transition-colors ${
-              activeDrawer === 'host' ? 'text-[#8ab4f8] bg-[#8ab4f8]/20' : 'text-gray-400 hover:text-white hover:bg-[#3c4043]'
-            }`}
-            title="Host controls"
-          >
-            <Shield className="w-5 h-5" />
-          </button>
-        )}
-      </div>
+              <SheetItem icon={Hand} label={handRaised ? 'Lower hand' : 'Raise hand'} active={handRaised} onClick={run(onToggleHand)} />
+              <SheetItem icon={ClosedCaption} label={captionsEnabled ? 'Captions on' : 'Captions'} active={captionsEnabled} onClick={run(onToggleCaptions)} />
+              <SheetItem icon={Users} label={`People (${participantsCount})`} onClick={run(() => onToggleDrawer('people'))} tone="text-blue-300" />
+              <SheetItem icon={Sparkles} label="Effects" onClick={run(() => onToggleDrawer('effects'))} tone="text-purple-300" />
+              <SheetItem icon={LayoutGrid} label={`Layout: ${layoutLabel}`} onClick={run(() => onSelectLayout(nextLayout))} />
+              <SheetItem icon={PenTool} label="Whiteboard" onClick={run(onOpenWhiteboard)} />
+              <SheetItem icon={Shapes} label="Activities" onClick={run(() => onToggleDrawer('activities'))} tone="text-emerald-300" />
+              <SheetItem icon={Circle} label={isRecording ? 'Stop recording' : 'Record'} active={isRecording} onClick={run(onToggleRecording)} tone="text-red-300" />
+              {isHost && <SheetItem icon={Shield} label="Host controls" onClick={run(() => onToggleDrawer('host'))} tone="text-yellow-300" />}
+              <SheetItem icon={Info} label="Meeting info" onClick={run(() => onToggleDrawer('info'))} />
+              <SheetItem icon={copied ? Check : Copy} label={copied ? 'Link copied' : 'Copy link'} onClick={copyLink} />
+              <SheetItem icon={Settings} label="Settings" onClick={run(onOpenSettings)} />
+              <SheetItem
+                icon={Maximize}
+                label="Full screen"
+                onClick={run(() => {
+                  if (!document.fullscreenElement) document.documentElement.requestFullscreen?.().catch(() => {})
+                  else document.exitFullscreen?.().catch(() => {})
+                })}
+              />
+            </div>
+            {hasPresentation && (
+              <p className="mt-3 text-[11px] text-gray-400">Tip: use the layout switch at the top to see everyone's camera while someone presents.</p>
+            )}
+          </div>
+        </>
+      )}
     </div>
   )
 }

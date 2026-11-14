@@ -59,7 +59,7 @@ export const PollsModal = ({
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-[#202124] text-white w-full max-w-lg rounded-2xl border border-[#3c4043] shadow-2xl overflow-hidden flex flex-col max-h-[85vh] animate-in zoom-in-95 duration-150">
+      <div className="bg-[#202124] text-white w-full max-w-lg rounded-2xl border border-[#3c4043] shadow-2xl overflow-hidden flex flex-col max-h-[85dvh] animate-in zoom-in-95 duration-150">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-[#3c4043]">
           <div className="flex items-center gap-2.5">

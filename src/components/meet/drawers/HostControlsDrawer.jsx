@@ -50,7 +50,7 @@ export const HostControlsDrawer = ({
   ]
 
   return (
-    <div className="w-80 md:w-96 bg-[#202124] text-white flex flex-col h-full border-l border-[#3c4043] shadow-2xl z-30 animate-in slide-in-from-right duration-200">
+    <div className="w-full bg-[#202124] text-white flex flex-col h-full border-l border-[#3c4043] shadow-2xl z-30 animate-in slide-in-from-right duration-200">
       {/* Header */}
       <div className="flex items-center justify-between px-6 py-5 border-b border-[#3c4043]">
         <div className="flex items-center gap-2">

@@ -191,21 +191,36 @@ export const ScheduleModal = ({ onClose, onScheduleSuccess }) => {
                   )}
                 </div>
 
-                {/* Email Dispatch Status */}
-                {scheduledResult.email_notifications && (
-                  <div className="p-3 bg-emerald-950/30 border border-emerald-800/40 rounded-xl text-left text-xs space-y-1.5">
-                    <div className="font-semibold text-emerald-400 flex items-center gap-1.5">
-                      <Mail className="w-3.5 h-3.5" />
-                      <span>Google Mail Reminders Dispatched:</span>
+                {/* Email delivery status: exactly what the server reported */}
+                {scheduledResult.email_notifications && (() => {
+                  const n = scheduledResult.email_notifications
+                  const allOk = n.attempted > 0 && n.failed === 0
+                  const noneOk = n.delivered === 0
+                  return (
+                    <div className={`p-3 rounded-xl text-left text-xs space-y-1.5 border ${
+                      allOk ? 'bg-emerald-950/30 border-emerald-800/40' : noneOk ? 'bg-red-950/30 border-red-800/40' : 'bg-amber-950/30 border-amber-800/40'
+                    }`}>
+                      <div className={`font-semibold flex items-center gap-1.5 ${allOk ? 'text-emerald-400' : noneOk ? 'text-red-300' : 'text-amber-300'}`}>
+                        <Mail className="w-3.5 h-3.5" />
+                        <span>
+                          {allOk ? `All ${n.delivered} emails were sent`
+                            : noneOk ? 'Emails could not be sent'
+                              : `${n.delivered} of ${n.attempted} emails were sent`}
+                        </span>
+                      </div>
+                      <ul className="text-gray-300 space-y-1 text-[11px]">
+                        {n.results.map((r) => (
+                          <li key={r.email}>
+                            <span className={r.success ? 'text-emerald-400' : 'text-red-300'}>{r.success ? '✓' : '✗'}</span>{' '}
+                            {r.target === 'host' ? 'You' : r.email}
+                            {r.error && <span className="block pl-4 text-gray-400">{r.error}</span>}
+                          </li>
+                        ))}
+                      </ul>
+                      {!allOk && <p className="text-gray-400 text-[11px]">The meeting was still created. Share the link below directly.</p>}
                     </div>
-                    <ul className="text-gray-300 space-y-1 pl-4 list-disc text-[11px]">
-                      <li>Host Reminder sent to <strong>You</strong></li>
-                      {scheduledResult.meeting?.guest_emails?.map((g, idx) => (
-                        <li key={idx}>Invitation & reminder sent to <strong>{g}</strong></li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
+                  )
+                })()}
               </div>
 
               {/* Action Buttons: 1-Click Google Calendar & Direct Link */}

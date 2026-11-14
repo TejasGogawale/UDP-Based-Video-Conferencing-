@@ -1,164 +1,166 @@
-import React, { useRef, useEffect } from 'react'
-import {
-  Mic,
-  MicOff,
-  Pin,
-  Maximize2,
-  Hand,
-  VolumeX,
-  Volume2
-} from 'lucide-react'
+import React, { useState } from 'react'
+import { Mic, MicOff, Pin, PinOff, Hand, VolumeX, UserX, Monitor, WifiOff, Loader2, Crown } from 'lucide-react'
+import { MediaVideo } from './media/MediaVideo'
+import { levelToPercent } from '../../lib/media/audioLevels'
 
+const Avatar = ({ name, speaking, size = 'md' }) => {
+  const initial = (name || 'U').trim().charAt(0).toUpperCase()
+  const dims = size === 'sm' ? 'w-10 h-10 text-base' : 'w-16 h-16 sm:w-20 sm:h-20 text-2xl sm:text-3xl'
+  return (
+    <div className="relative">
+      {speaking && <div className="absolute -inset-2 rounded-full border-2 border-[#8ab4f8]/70 animate-pulse" />}
+      <div className={`${dims} rounded-full bg-gradient-to-tr from-blue-600 via-indigo-600 to-purple-600 flex items-center justify-center font-semibold text-white shadow-xl`}>
+        {initial}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * One participant's camera tile. All state comes from props (roster + media);
+ * the tile never decides on its own whether someone is "really" there.
+ */
 export const ParticipantTile = ({
-  stream,
-  userName = 'Participant',
+  name = 'Participant',
   isSelf = false,
-  audioEnabled = true,
-  videoEnabled = true,
+  isOwnerHost = false,
+  stream = null,
+  videoOn = false,
+  audioOn = true,
   handRaised = false,
-  isSpeaking = false,
-  isPinned = false,
+  isPresenting = false,
+  speaking = false,
+  level = 0,
+  connection = 'connected', // connecting | connected | reconnecting | failed
+  quality = null,
+  pinned = false,
+  compact = false,
+  mirror = false,
+  canModerate = false,
   onPin,
   onMute,
-  isHost = false,
-  filterStyle = 'none',
-  effectType = 'none'
+  onRemove
 }) => {
-  const videoRef = useRef(null)
-  const audioRef = useRef(null)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const showVideo = videoOn && stream && stream.getVideoTracks().length > 0
 
-  // Attach and play video stream
-  useEffect(() => {
-    const videoEl = videoRef.current
-    if (videoEl && stream) {
-      if (videoEl.srcObject !== stream) {
-        videoEl.srcObject = stream
-      }
-      videoEl.play().catch(() => {})
-    }
-  }, [stream, videoEnabled])
+  const placeholder = (
+    <div className="w-full h-full flex flex-col items-center justify-center bg-[#28292c] gap-2 px-2 text-center">
+      <Avatar name={name} speaking={speaking && audioOn} size={compact ? 'sm' : 'md'} />
+      {!compact && !isSelf && connection === 'connecting' && (
+        <span className="flex items-center gap-1.5 text-[11px] text-gray-400"><Loader2 className="w-3 h-3 animate-spin" /> Connecting…</span>
+      )}
+    </div>
+  )
 
-  // Dedicated Audio Element for Remote Participants (Guarantees uninterrupted audio playback)
-  useEffect(() => {
-    const audioEl = audioRef.current
-    if (audioEl && stream && !isSelf) {
-      if (audioEl.srcObject !== stream) {
-        audioEl.srcObject = stream
-      }
-      audioEl.play().catch(() => {})
-    }
-  }, [stream, isSelf, audioEnabled])
-
-  // CSS Filter computations
-  let filterCss = ''
-  if (filterStyle === 'warm') filterCss = 'brightness(105%) contrast(105%) sepia(20%)'
-  else if (filterStyle === 'cool') filterCss = 'brightness(110%) hue-rotate(15deg)'
-  else if (filterStyle === 'noir') filterCss = 'grayscale(100%) contrast(120%)'
-  else if (filterStyle === 'vivid') filterCss = 'saturate(130%) contrast(110%)'
-
-  let blurClass = ''
-  if (effectType === 'blur-sm') blurClass = 'backdrop-blur-sm'
-  else if (effectType === 'blur-lg') blurClass = 'backdrop-blur-md'
+  // Camera is on but no frames yet (still connecting, or media blocked by the network).
+  const waitingForVideo = (
+    <div className="w-full h-full flex flex-col items-center justify-center bg-[#28292c] gap-2 px-3 text-center">
+      <Avatar name={name} size={compact ? 'sm' : 'md'} />
+      {!compact && (
+        <span className="flex items-center gap-1.5 text-[11px] text-gray-400">
+          <Loader2 className="w-3 h-3 animate-spin" />
+          {isSelf ? 'Starting camera…' : `Waiting for ${name}'s video…`}
+        </span>
+      )}
+    </div>
+  )
 
   return (
     <div
-      className={`relative w-full h-full bg-[#3c4043] rounded-2xl overflow-hidden group select-none transition-all duration-200 border-2 ${
-        isSpeaking
-          ? 'border-[#8ab4f8] shadow-[0_0_20px_rgba(138,180,248,0.4)]'
-          : 'border-transparent'
+      data-testid="participant-tile"
+      data-name={name}
+      data-self={isSelf ? 'true' : 'false'}
+      data-connection={connection}
+      className={`relative w-full h-full bg-[#3c4043] rounded-xl sm:rounded-2xl overflow-hidden group select-none border-2 transition-colors ${
+        speaking && audioOn ? 'border-[#8ab4f8] shadow-[0_0_16px_rgba(138,180,248,0.35)]' : 'border-transparent'
       }`}
     >
-      {/* Dedicated Hidden Audio Playback for Remote Streams */}
-      {!isSelf && (
-        <audio
-          ref={audioRef}
-          autoPlay
-          playsInline
-          muted={false}
-          className="hidden"
-        />
+      {showVideo ? (
+        <MediaVideo stream={stream} mirror={mirror} fallback={waitingForVideo} />
+      ) : (
+        placeholder
       )}
 
-      {/* Video Element */}
-      <video
-        ref={videoRef}
-        autoPlay
-        playsInline
-        muted={isSelf}
-        className={`w-full h-full object-cover transition-opacity duration-200 ${
-          isSelf ? '-scale-x-100' : ''
-        } ${blurClass} ${videoEnabled && stream ? 'opacity-100' : 'opacity-0 absolute inset-0 pointer-events-none'}`}
-        style={{ filter: filterCss || undefined }}
-      />
-
-      {/* Dynamic Audio-Reactive Avatar Placeholder when video is off */}
-      {(!videoEnabled || !stream) && (
-        <div className="w-full h-full flex flex-col items-center justify-center bg-[#28292c]">
-          <div className="relative">
-            {/* Animated ripple rings when speaking */}
-            {isSpeaking && (
-              <>
-                <div className="absolute inset-0 rounded-full bg-[#8ab4f8]/20 animate-ping" />
-                <div className="absolute -inset-3 rounded-full border border-[#8ab4f8]/40 animate-pulse" />
-              </>
-            )}
-            <div className="w-20 h-20 md:w-24 md:h-24 rounded-full bg-gradient-to-tr from-blue-600 via-indigo-600 to-purple-600 flex items-center justify-center text-2xl md:text-3xl font-bold text-white shadow-xl">
-              {userName ? userName.charAt(0).toUpperCase() : 'U'}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Floating Name Pill & Mic Status */}
-      <div className="absolute bottom-3 left-3 flex items-center gap-1.5 px-3 py-1.5 bg-[#202124]/80 backdrop-blur-md rounded-full text-xs font-medium text-white shadow-md z-10 border border-white/10 max-w-[80%] truncate">
-        <span className="truncate">{userName} {isSelf && '(You)'}</span>
-        <div className="shrink-0">
-          {audioEnabled ? (
-            <div className={`p-0.5 ${isSpeaking ? 'text-[#8ab4f8]' : 'text-gray-300'}`}>
-              <Mic className="w-3.5 h-3.5" />
-            </div>
-          ) : (
-            <div className="p-0.5 text-[#f28b82]">
-              <MicOff className="w-3.5 h-3.5" />
-            </div>
+      {/* Connection problems are stated, never shown as a silent black tile. */}
+      {!isSelf && (connection === 'failed' || connection === 'reconnecting') && (
+        <div className="absolute inset-0 bg-black/70 flex flex-col items-center justify-center gap-1.5 p-3 text-center z-10">
+          <WifiOff className="w-5 h-5 text-[#f28b82]" />
+          {!compact && (
+            <p className="text-xs text-gray-200 max-w-[16rem]">
+              {connection === 'failed'
+                ? `Can't connect to ${name}'s audio/video. A TURN relay may be required on this network.`
+                : `Reconnecting to ${name}…`}
+            </p>
           )}
         </div>
+      )}
+
+      {/* Name pill */}
+      <div className="absolute bottom-1.5 left-1.5 sm:bottom-2.5 sm:left-2.5 flex items-center gap-1.5 pl-2 pr-1.5 py-1 bg-[#202124]/80 backdrop-blur-md rounded-full text-[11px] sm:text-xs font-medium text-white z-20 max-w-[85%]">
+        {isOwnerHost && <Crown className="w-3 h-3 text-[#fbbc04] shrink-0" />}
+        {isPresenting && <Monitor className="w-3 h-3 text-[#8ab4f8] shrink-0" />}
+        <span className="truncate">{name}{isSelf ? ' (You)' : ''}</span>
+        {audioOn ? (
+          <span className="relative w-4 h-4 shrink-0 flex items-center justify-center">
+            <Mic className={`w-3.5 h-3.5 ${speaking ? 'text-[#8ab4f8]' : 'text-gray-300'}`} />
+            <span
+              className="absolute bottom-0 left-1/2 -translate-x-1/2 w-0.5 bg-[#8ab4f8] rounded-full transition-all duration-150"
+              style={{ height: `${Math.min(12, levelToPercent(level) / 8)}px` }}
+            />
+          </span>
+        ) : (
+          <MicOff className="w-3.5 h-3.5 text-[#f28b82] shrink-0" aria-label="Microphone muted" />
+        )}
+        {quality === 'poor' && !isSelf && <WifiOff className="w-3 h-3 text-[#fbbc04] shrink-0" aria-label="Poor connection" />}
       </div>
 
-      {/* Top Left: Hand Raised Badge */}
       {handRaised && (
-        <div className="absolute top-3 left-3 flex items-center gap-1.5 px-3 py-1.5 bg-[#fbbc04] text-[#202124] text-xs font-bold rounded-full shadow-lg z-10 animate-bounce">
+        <div className="absolute top-1.5 left-1.5 sm:top-2.5 sm:left-2.5 flex items-center gap-1 px-2 py-1 bg-[#fbbc04] text-[#202124] text-[11px] font-bold rounded-full shadow z-20">
           <Hand className="w-3.5 h-3.5 fill-current" />
-          <span>Hand raised</span>
+          {!compact && <span>Hand raised</span>}
         </div>
       )}
 
-      {/* Top Right: Quick Action Overlay on Hover */}
-      <div className="absolute top-3 right-3 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
-        {/* Pin button */}
-        <button
-          onClick={() => onPin && onPin(!isPinned)}
-          className={`p-2 rounded-full backdrop-blur-md transition-colors shadow ${
-            isPinned
-              ? 'bg-[#8ab4f8] text-[#202124]'
-              : 'bg-[#202124]/80 text-white hover:bg-[#3c4043]'
+      {/* Actions: visible on hover (desktop) or after a tap (touch). */}
+      {(onPin || canModerate) && (
+        <div
+          className={`absolute top-1.5 right-1.5 sm:top-2.5 sm:right-2.5 flex items-center gap-1 z-20 transition-opacity ${
+            menuOpen ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus-within:opacity-100'
           }`}
-          title={isPinned ? 'Unpin' : 'Pin tile to main stage'}
+          onClick={(e) => e.stopPropagation()}
         >
-          <Pin className="w-4 h-4" />
-        </button>
+          {onPin && (
+            <button
+              onClick={() => onPin(!pinned)}
+              className={`p-1.5 sm:p-2 rounded-full backdrop-blur-md shadow ${pinned ? 'bg-[#8ab4f8] text-[#202124]' : 'bg-[#202124]/80 text-white hover:bg-[#3c4043]'}`}
+              title={pinned ? 'Unpin' : 'Pin to main stage'}
+              aria-label={pinned ? `Unpin ${name}` : `Pin ${name}`}
+            >
+              {pinned ? <PinOff className="w-4 h-4" /> : <Pin className="w-4 h-4" />}
+            </button>
+          )}
+          {canModerate && !isSelf && audioOn && (
+            <button onClick={onMute} className="p-1.5 sm:p-2 rounded-full bg-[#202124]/80 text-white hover:bg-red-600/80 backdrop-blur-md shadow" title={`Mute ${name}`} aria-label={`Mute ${name}`}>
+              <VolumeX className="w-4 h-4" />
+            </button>
+          )}
+          {canModerate && !isSelf && onRemove && (
+            <button onClick={onRemove} className="p-1.5 sm:p-2 rounded-full bg-[#202124]/80 text-white hover:bg-red-600/80 backdrop-blur-md shadow" title={`Remove ${name}`} aria-label={`Remove ${name}`}>
+              <UserX className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+      )}
 
-        {/* Host Mute Action */}
-        {isHost && !isSelf && onMute && (
-          <button
-            onClick={onMute}
-            className="p-2 rounded-full bg-[#202124]/80 text-white hover:bg-red-600/80 backdrop-blur-md transition-colors shadow"
-            title="Mute participant"
-          >
-            <VolumeX className="w-4 h-4" />
-          </button>
-        )}
-      </div>
+      {/* Touch devices have no hover: a tap toggles the action buttons. */}
+      {(onPin || canModerate) && (
+        <button
+          className="absolute inset-0 z-[5] sm:hidden"
+          aria-label={`Show actions for ${name}`}
+          onClick={() => setMenuOpen((v) => !v)}
+        />
+      )}
     </div>
   )
 }
