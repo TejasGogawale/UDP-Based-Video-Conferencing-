@@ -30,19 +30,9 @@ export const DEFAULT_ICE_SERVERS = [
     urls: [
       'stun:stun.l.google.com:19302',
       'stun:stun1.l.google.com:19302',
+      'stun:stun2.l.google.com:19302',
       'stun:stun.cloudflare.com:3478'
     ]
-  },
-  {
-    urls: [
-      'turn:openrelay.metered.ca:80',
-      'turn:openrelay.metered.ca:80?transport=tcp',
-      'turn:openrelay.metered.ca:443',
-      'turn:openrelay.metered.ca:443?transport=tcp',
-      'turns:openrelay.metered.ca:443?transport=tcp'
-    ],
-    username: 'openrelayproject',
-    credential: 'openrelayproject'
   }
 ]
 
@@ -175,13 +165,17 @@ export class PeerMesh {
       clearTimeout(peer.disconnectTimer)
       const state = pc.iceConnectionState
       if (state === 'connected' || state === 'completed') {
+        peer.usingRelay = false
         clearTimeout(peer.relayFallbackTimer)
         this.onRelayNeeded(peerId, false)
       } else if (state === 'failed') {
+        peer.usingRelay = true
         this.onRelayNeeded(peerId, true)
         this.triggerIceRestart(peer)
       } else if (state === 'disconnected') {
-        // Often recovers by itself; if not, renegotiate ICE and enable HTTPS relay fallback.
+        peer.usingRelay = true
+        this.onRelayNeeded(peerId, true)
+        // Often recovers by itself; if not, renegotiate ICE while HTTPS relay keeps media flowing.
         peer.disconnectTimer = setTimeout(() => {
           if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') {
             this.onRelayNeeded(peerId, true)
@@ -189,18 +183,20 @@ export class PeerMesh {
           }
         }, DISCONNECT_GRACE_MS)
       }
-      this.onPeerState(peerId, this.describeState(pc))
+      this.onPeerState(peerId, this.describeState(pc, peer))
     }
-    pc.onconnectionstatechange = () => this.onPeerState(peerId, this.describeState(pc))
+    pc.onconnectionstatechange = () => this.onPeerState(peerId, this.describeState(pc, peer))
 
-    // If direct UDP + TURN has not connected after 6 seconds, activate HTTPS WebSocket relay
+    // If direct UDP P2P has not connected after 2.5 seconds, activate HTTPS WebSocket relay
     // so strict mobile/college firewalls never leave the user staring at a failed screen.
     peer.relayFallbackTimer = setTimeout(() => {
       const ice = pc.iceConnectionState
       if (ice !== 'connected' && ice !== 'completed') {
+        peer.usingRelay = true
         this.onRelayNeeded(peerId, true)
+        this.onPeerState(peerId, 'connected')
       }
-    }, 6000)
+    }, 2500)
 
     if (peer.polite) {
       peer.startTimer = setTimeout(() => this.startPeer(peer), FIRST_OFFER_TIMEOUT_MS)
@@ -312,9 +308,10 @@ export class PeerMesh {
     this.onPeerState(peerId, null)
   }
 
-  describeState(pc) {
+  describeState(pc, peer) {
     const ice = pc.iceConnectionState
     if (ice === 'connected' || ice === 'completed') return 'connected'
+    if (peer?.usingRelay) return 'connected'
     if (ice === 'failed' || pc.connectionState === 'failed') return 'failed'
     if (ice === 'disconnected') return 'reconnecting'
     return 'connecting'

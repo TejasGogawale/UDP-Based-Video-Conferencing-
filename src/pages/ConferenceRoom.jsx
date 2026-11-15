@@ -36,8 +36,13 @@ const QUALITY_UI = {
 /** Pick the camera stream of a participant out of the streams received from them. */
 function cameraMedia(participant, media) {
   if (!media) return null
-  if (participant.cameraStreamId && media[participant.cameraStreamId]) return media[participant.cameraStreamId]
-  const entry = Object.entries(media).find(([id]) => id !== participant.screenStreamId)
+  const primary = participant.cameraStreamId && media[participant.cameraStreamId]
+  if (primary && primary.videoFlowing) return primary
+  if (media['relay-camera']) return media['relay-camera']
+  if (primary) return primary
+  const entry = Object.entries(media).find(
+    ([id]) => id !== participant.screenStreamId && id !== 'relay-screen'
+  )
   return entry ? entry[1] : null
 }
 
@@ -127,7 +132,8 @@ const ConferenceRoom = () => {
         isSelf: false,
         isOwnerHost: p.isHost,
         stream: cam?.stream || null,
-        videoOn: p.videoEnabled && Boolean(cam?.hasVideo),
+        relayFrame: cam?.relayFrame || null,
+        videoOn: p.videoEnabled && Boolean(cam?.hasVideo || cam?.relayFrame),
         audioOn: p.audioEnabled,
         handRaised: p.handRaised,
         isPresenting: p.isPresenting,
@@ -154,8 +160,18 @@ const ConferenceRoom = () => {
         ? { stream: conf.localScreenStream, hasVideo: true, isSelf: true, presenterName: 'You' }
         : null
     }
-    const screen = presenter.screenStreamId ? conf.remoteMedia[presenter.userId]?.[presenter.screenStreamId] : null
-    return { stream: screen?.stream || null, hasVideo: Boolean(screen?.hasVideo), isSelf: false, presenterName: presenter.userName }
+    const peerMedia = conf.remoteMedia[presenter.userId] || {}
+    const nativeScreen = presenter.screenStreamId ? peerMedia[presenter.screenStreamId] : null
+    const screen = (nativeScreen && nativeScreen.videoFlowing)
+      ? nativeScreen
+      : peerMedia['relay-screen'] || nativeScreen
+    return {
+      stream: screen?.stream || null,
+      relayFrame: screen?.relayFrame || null,
+      hasVideo: Boolean(screen?.hasVideo || screen?.relayFrame),
+      isSelf: false,
+      presenterName: presenter.userName
+    }
   }, [conf.presenter, conf.selfId, conf.localScreenStream, conf.remoteMedia])
 
   // Every remote stream gets exactly one audio element.
@@ -163,7 +179,7 @@ const ConferenceRoom = () => {
     const list = []
     for (const [peerId, media] of Object.entries(conf.remoteMedia)) {
       for (const [streamId, { stream }] of Object.entries(media)) {
-        if (stream.getAudioTracks().length) list.push({ key: `${peerId}:${streamId}`, stream })
+        if (stream?.getAudioTracks?.().length) list.push({ key: `${peerId}:${streamId}`, stream })
       }
     }
     return list

@@ -116,8 +116,25 @@ export function useConference({ meetingRef, user }) {
   const captionServiceRef = useRef(null)
   const recorderRef = useRef(null)
   const relayPeersRef = useRef(new Set())
-  const relayTxRef = useRef({ timer: null, videoEl: null, canvas: null, ctx: null, track: null })
-  const relayRxRef = useRef(new Map()) // peerId -> { canvas, ctx, stream }
+  const relayTxRef = useRef({
+    timer: null,
+    videoEl: null,
+    canvas: null,
+    ctx: null,
+    track: null,
+    screenEl: null,
+    screenCanvas: null,
+    screenCtx: null,
+    screenTrack: null,
+    audioCtx: null,
+    audioSource: null,
+    audioProcessor: null,
+    audioTrack: null,
+    lastHeartbeat: 0
+  })
+  const relayRxRef = useRef(new Map()) // peerId -> { canvas, ctx, stream, nextAudioTime }
+  const relayAudioCtxRef = useRef(null)
+  const syncRelayTxRef = useRef(null)
   const remoteMediaRef = useRef({})
   const rosterRef = useRef([])
   // Incremented on every mount/unmount; async media work started under an older
@@ -163,6 +180,7 @@ export function useConference({ meetingRef, user }) {
       videoTrack: videoEnabledRef.current ? liveTrack(rawCamRef.current) : null,
       audioTrack: audioEnabledRef.current ? mic : null
     })
+    syncRelayTxRef.current?.()
   }, [])
 
   const refreshDevices = useCallback(async () => {
@@ -381,45 +399,186 @@ export function useConference({ meetingRef, user }) {
       tx.videoEl = null
       tx.track = null
     }
+    if (tx.screenEl) {
+      try {
+        tx.screenEl.pause()
+        tx.screenEl.srcObject = null
+      } catch {
+        // ignore
+      }
+      tx.screenEl = null
+      tx.screenTrack = null
+    }
+    if (tx.audioProcessor || tx.audioSource || tx.audioCtx) {
+      try {
+        tx.audioProcessor?.disconnect()
+        tx.audioSource?.disconnect()
+        tx.audioCtx?.close?.()
+      } catch {
+        // ignore
+      }
+      tx.audioProcessor = null
+      tx.audioSource = null
+      tx.audioCtx = null
+      tx.audioTrack = null
+    }
   }, [])
 
   const syncRelayTx = useCallback(() => {
     const tx = relayTxRef.current
-    if (relayPeersRef.current.size === 0 || stageRef.current !== 'in_call') {
+    if (relayPeersRef.current.size === 0 || (stageRef.current !== 'in_call' && stageRef.current !== 'joining')) {
       stopRelayTx()
       return
     }
+
+    // Set up Web Audio PCM16 capture for microphone relay when audio is enabled
+    const micTrack = audioEnabledRef.current ? liveTrack(micRef.current) : null
+    if (micTrack && typeof window !== 'undefined' && (window.AudioContext || window.webkitAudioContext)) {
+      if (tx.audioTrack !== micTrack || !tx.audioCtx) {
+        try {
+          tx.audioProcessor?.disconnect()
+          tx.audioSource?.disconnect()
+          tx.audioCtx?.close?.()
+        } catch {
+          // ignore
+        }
+        try {
+          const AC = window.AudioContext || window.webkitAudioContext
+          const ctx = new AC()
+          const source = ctx.createMediaStreamSource(new MediaStream([micTrack]))
+          const processor = ctx.createScriptProcessor(4096, 1, 1)
+          const zeroGain = ctx.createGain()
+          zeroGain.gain.value = 0
+          source.connect(processor)
+          processor.connect(zeroGain)
+          zeroGain.connect(ctx.destination)
+          const targetRate = 12000
+          processor.onaudioprocess = (e) => {
+            if (relayPeersRef.current.size === 0 || !audioEnabledRef.current) return
+            const input = e.inputBuffer.getChannelData(0)
+            const inRate = ctx.sampleRate || 48000
+            const ratio = Math.max(1, inRate / targetRate)
+            const outLen = Math.floor(input.length / ratio)
+            if (outLen <= 0) return
+            const pcm16 = new Int16Array(outLen)
+            let sumSq = 0
+            for (let i = 0; i < outLen; i++) {
+              const sample = Math.max(-1, Math.min(1, input[Math.floor(i * ratio)] || 0))
+              sumSq += sample * sample
+              pcm16[i] = sample < 0 ? sample * 0x8000 : sample * 0x7fff
+            }
+            const rms = Math.sqrt(sumSq / outLen)
+            if (rms < 0.003) return
+            const bytes = new Uint8Array(pcm16.buffer)
+            let binary = ''
+            for (let i = 0; i < bytes.byteLength; i++) {
+              binary += String.fromCharCode(bytes[i])
+            }
+            const b64 = typeof btoa === 'function' ? btoa(binary) : ''
+            if (b64) {
+              emit('media_relay', {
+                kind: 'audio',
+                audio: b64,
+                sampleRate: targetRate,
+                level: Math.min(1, Number((rms * 4).toFixed(3))),
+                ts: Date.now()
+              })
+            }
+          }
+          tx.audioCtx = ctx
+          tx.audioSource = source
+          tx.audioProcessor = processor
+          tx.audioTrack = micTrack
+        } catch {
+          // AudioContext unavailable in headless test environments
+        }
+      }
+    } else if (tx.audioCtx) {
+      try {
+        tx.audioProcessor?.disconnect()
+        tx.audioSource?.disconnect()
+        tx.audioCtx?.close?.()
+      } catch {
+        // ignore
+      }
+      tx.audioProcessor = null
+      tx.audioSource = null
+      tx.audioCtx = null
+      tx.audioTrack = null
+    }
+
     if (tx.timer) return
     tx.timer = setInterval(() => {
-      if (relayPeersRef.current.size === 0 || !videoEnabledRef.current) return
-      const camTrack = liveTrack(sentCamRef.current)
-      if (!camTrack || typeof document === 'undefined') return
-      try {
-        if (tx.track !== camTrack || !tx.videoEl) {
-          tx.track = camTrack
-          const v = document.createElement('video')
-          v.muted = true
-          v.playsInline = true
-          v.srcObject = new MediaStream([camTrack])
-          v.play().catch(() => {})
-          tx.videoEl = v
-        }
-        if (!tx.canvas) {
-          tx.canvas = document.createElement('canvas')
-          tx.canvas.width = 320
-          tx.canvas.height = 180
-          tx.ctx = tx.canvas.getContext('2d')
-        }
-        if (tx.videoEl.readyState >= 2 && tx.ctx) {
-          tx.ctx.drawImage(tx.videoEl, 0, 0, 320, 180)
-          const frame = tx.canvas.toDataURL('image/jpeg', 0.5)
-          emit('media_relay', { streamKind: 'camera', frame, ts: Date.now() })
-        }
-      } catch {
-        // Ignore canvas capture errors in headless environments
+      if (relayPeersRef.current.size === 0) return
+      const now = Date.now()
+      if (now - (tx.lastHeartbeat || 0) >= 2400) {
+        tx.lastHeartbeat = now
+        emit('media_relay', { kind: 'heartbeat', ts: now })
       }
-    }, 260)
+      if (typeof document === 'undefined') return
+
+      // 1. Camera video relay
+      if (videoEnabledRef.current) {
+        const camTrack = liveTrack(sentCamRef.current) || liveTrack(rawCamRef.current)
+        if (camTrack) {
+          try {
+            if (tx.track !== camTrack || !tx.videoEl) {
+              tx.track = camTrack
+              const v = document.createElement('video')
+              v.muted = true
+              v.playsInline = true
+              v.srcObject = new MediaStream([camTrack])
+              v.play().catch(() => {})
+              tx.videoEl = v
+            }
+            if (!tx.canvas) {
+              tx.canvas = document.createElement('canvas')
+              tx.canvas.width = 320
+              tx.canvas.height = 180
+              tx.ctx = tx.canvas.getContext('2d')
+            }
+            if (tx.videoEl.readyState >= 2 && tx.ctx) {
+              tx.ctx.drawImage(tx.videoEl, 0, 0, 320, 180)
+              const frame = tx.canvas.toDataURL('image/jpeg', 0.52)
+              emit('media_relay', { kind: 'video', streamKind: 'camera', frame, ts: now })
+            }
+          } catch {
+            // Ignore canvas capture errors in headless environments
+          }
+        }
+      }
+
+      // 2. Screen share video relay
+      const screenTrack = liveTrack(screenRef.current?.getVideoTracks?.()[0])
+      if (screenTrack) {
+        try {
+          if (tx.screenTrack !== screenTrack || !tx.screenEl) {
+            tx.screenTrack = screenTrack
+            const sv = document.createElement('video')
+            sv.muted = true
+            sv.playsInline = true
+            sv.srcObject = new MediaStream([screenTrack])
+            sv.play().catch(() => {})
+            tx.screenEl = sv
+          }
+          if (!tx.screenCanvas) {
+            tx.screenCanvas = document.createElement('canvas')
+            tx.screenCanvas.width = 640
+            tx.screenCanvas.height = 360
+            tx.screenCtx = tx.screenCanvas.getContext('2d')
+          }
+          if (tx.screenEl.readyState >= 2 && tx.screenCtx) {
+            tx.screenCtx.drawImage(tx.screenEl, 0, 0, 640, 360)
+            const frame = tx.screenCanvas.toDataURL('image/jpeg', 0.55)
+            emit('media_relay', { kind: 'video', streamKind: 'screen', frame, ts: now })
+          }
+        } catch {
+          // Ignore canvas capture errors
+        }
+      }
+    }, 220)
   }, [emit, stopRelayTx])
+  syncRelayTxRef.current = syncRelayTx
 
   const teardownMesh = useCallback(() => {
     meshRef.current?.close()
@@ -446,18 +605,30 @@ export function useConference({ meetingRef, user }) {
       onRemoteStreams: (peerId, streams) => {
         setRemoteMedia((prev) => {
           const next = { ...prev }
-          if (streams && Object.keys(streams).length) next[peerId] = streams
+          const prevPeer = prev[peerId] || {}
+          const preserved = {}
+          if (prevPeer['relay-camera']) preserved['relay-camera'] = prevPeer['relay-camera']
+          if (prevPeer['relay-screen']) preserved['relay-screen'] = prevPeer['relay-screen']
+          const merged = { ...(streams || {}), ...preserved }
+          if (Object.keys(merged).length) next[peerId] = merged
           else delete next[peerId]
           return next
         })
       },
       onPeerState: (peerId, state) => {
+        if (state === 'failed' || state === 'reconnecting') {
+          relayPeersRef.current.add(peerId)
+          syncRelayTxRef.current?.()
+        }
         setPeerStates((prev) => {
           const next = { ...prev }
           if (!state) {
             delete next[peerId]
-          } else if (state === 'failed' && relayRxRef.current.has(peerId)) {
-            // Keep tile in 'connected' state while HTTPS WebSocket relay is active
+          } else if (
+            (state === 'failed' || state === 'reconnecting') &&
+            (socketRef.current?.connected || relayPeersRef.current.has(peerId) || relayRxRef.current.has(peerId))
+          ) {
+            // Built-in HTTPS Socket.IO relay keeps the participant connected even when UDP/NAT fails
             next[peerId] = 'connected'
           } else {
             next[peerId] = state
@@ -468,7 +639,7 @@ export function useConference({ meetingRef, user }) {
       onRelayNeeded: (peerId, needed) => {
         if (needed) relayPeersRef.current.add(peerId)
         else relayPeersRef.current.delete(peerId)
-        syncRelayTx()
+        syncRelayTxRef.current?.()
       },
       onPeerStats: (peerId, stats) => {
         setPeerStats((prev) => ({ ...prev, [peerId]: stats }))
@@ -507,6 +678,8 @@ export function useConference({ meetingRef, user }) {
     setLocalScreenStream(null)
     meshRef.current?.setLocalTracks({ screen: null, screenAudio: null })
     emit('screen_share_status', { isSharing: false })
+    emit('media_relay', { kind: 'video_off', streamKind: 'screen', ts: Date.now() })
+    syncRelayTxRef.current?.()
     if (!silent) notify('You stopped presenting.')
   }, [emit, notify])
 
@@ -539,6 +712,7 @@ export function useConference({ meetingRef, user }) {
     setLocalScreenStream(stream)
     meshRef.current?.setLocalTracks({ screen: video, screenAudio: stream.getAudioTracks()[0] || null })
     emit('screen_share_status', { isSharing: true, streamId: outStreamsRef.current.screen.id })
+    syncRelayTxRef.current?.()
   }, [emit, notify, stopScreenShare])
 
   const toggleScreenShare = useCallback(() => {
@@ -689,8 +863,15 @@ export function useConference({ meetingRef, user }) {
       if (state.host_locks) setHostLocks(state.host_locks)
       setRecording(state.recording || null)
       setCaptionsDemand(Boolean(state.captionsDemand))
+      const wasInCall = stageRef.current === 'in_call'
+      stageRef.current = 'in_call'
       const mesh = buildMesh(payload.selfId)
-      mesh.syncPeers(payload.participants.map((p) => p.userId).filter((id) => id !== payload.selfId))
+      const remoteIds = payload.participants.map((p) => p.userId).filter((id) => id !== payload.selfId)
+      mesh.syncPeers(remoteIds)
+      for (const peerId of remoteIds) {
+        relayPeersRef.current.add(peerId)
+      }
+      syncRelayTxRef.current?.()
       if (payload.livenessSeed) {
         if (!livenessVerifierRef.current) {
           livenessVerifierRef.current = new LivenessVerifier({
@@ -704,7 +885,7 @@ export function useConference({ meetingRef, user }) {
         livenessVerifierRef.current.setSeed(payload.livenessSeed)
         livenessVerifierRef.current.start()
       }
-      if (stageRef.current !== 'in_call') {
+      if (!wasInCall) {
         setStage('in_call')
         setJoinedAt(Date.now())
         sounds.playJoinChime()
@@ -728,49 +909,135 @@ export function useConference({ meetingRef, user }) {
       if (participants.some((p) => p.handRaised && !raisedBefore.has(p.userId) && p.userId !== myId)) {
         sounds.playHandRaise()
       }
+      for (const id of [...relayPeersRef.current]) {
+        if (!nextIds.has(id)) relayPeersRef.current.delete(id)
+      }
+      for (const [key, rx] of [...relayRxRef.current.entries()]) {
+        const peerKey = String(key).split(':')[0]
+        if (!nextIds.has(peerKey)) {
+          rx.stream?.getTracks?.().forEach(stopTrack)
+          relayRxRef.current.delete(key)
+        }
+      }
+      for (const p of participants) {
+        if (p.userId !== myId && !prevIds.has(p.userId)) {
+          relayPeersRef.current.add(p.userId)
+        }
+      }
       setRoster(participants)
       meshRef.current?.syncPeers(participants.map((p) => p.userId).filter((id) => id !== myId))
+      syncRelayTxRef.current?.()
     })
 
     socket.on('signal', handleSignal)
-    socket.on('media_relay', ({ from, frame }) => {
-      if (!from || !frame || from === selfIdRef.current || typeof Image === 'undefined') return
-      // Also make sure we reciprocate relay frames back to a peer that is relaying to us
-      if (!relayPeersRef.current.has(from)) {
+    socket.on('media_relay', (pkt) => {
+      const { from, kind, streamKind = 'camera', frame, audio, sampleRate = 12000, level = 0 } = pkt || {}
+      if (!from || from === selfIdRef.current) return
+
+      setPeerStates((prev) => (prev[from] === 'connected' ? prev : { ...prev, [from]: 'connected' }))
+
+      const peer = meshRef.current?.peers?.get(from)
+      const nativeIce = peer?.pc?.iceConnectionState
+      const nativeConnected = nativeIce === 'connected' || nativeIce === 'completed'
+      if (!nativeConnected && !relayPeersRef.current.has(from)) {
         relayPeersRef.current.add(from)
-        syncRelayTx()
+        syncRelayTxRef.current?.()
       }
-      let rx = relayRxRef.current.get(from)
-      if (!rx && typeof document !== 'undefined') {
-        const canvas = document.createElement('canvas')
-        canvas.width = 320
-        canvas.height = 180
-        const ctx = canvas.getContext('2d')
-        const stream = canvas.captureStream ? canvas.captureStream(12) : null
-        rx = { canvas, ctx, stream }
-        relayRxRef.current.set(from, rx)
+
+      if (kind === 'video_off') {
+        const slot = streamKind === 'screen' ? 'relay-screen' : 'relay-camera'
+        setRemoteMedia((prev) => {
+          const existing = prev[from]
+          if (!existing || !existing[slot]) return prev
+          const nextPeer = { ...existing }
+          delete nextPeer[slot]
+          return { ...prev, [from]: nextPeer }
+        })
+        return
       }
-      if (!rx?.ctx || !rx?.stream) return
-      const img = new Image()
-      img.onload = () => {
-        rx.ctx.drawImage(img, 0, 0, 320, 180)
+
+      if ((kind === 'video' || frame) && frame) {
+        const slot = streamKind === 'screen' ? 'relay-screen' : 'relay-camera'
+        let rx = relayRxRef.current.get(`${from}:${slot}`)
+        if (!rx && typeof document !== 'undefined') {
+          const canvas = document.createElement('canvas')
+          canvas.width = streamKind === 'screen' ? 640 : 320
+          canvas.height = streamKind === 'screen' ? 360 : 180
+          const ctx = canvas.getContext('2d')
+          const stream = canvas.captureStream
+            ? canvas.captureStream(12)
+            : typeof MediaStream !== 'undefined'
+              ? new MediaStream()
+              : null
+          rx = { canvas, ctx, stream }
+          relayRxRef.current.set(`${from}:${slot}`, rx)
+        }
         setRemoteMedia((prev) => {
           const existing = prev[from] || {}
-          const hasNativeVideo = Object.entries(existing).some(
-            ([k, v]) => k !== 'relay-camera' && v?.videoFlowing
-          )
-          if (hasNativeVideo) return prev
           return {
             ...prev,
             [from]: {
               ...existing,
-              'relay-camera': { stream: rx.stream, hasVideo: true, videoFlowing: true }
+              [slot]: {
+                stream: rx?.stream || (typeof MediaStream !== 'undefined' ? new MediaStream() : null),
+                hasVideo: true,
+                videoFlowing: true,
+                relayFrame: frame
+              }
             }
           }
         })
-        setPeerStates((prev) => (prev[from] === 'connected' ? prev : { ...prev, [from]: 'connected' }))
+        if (rx?.ctx && typeof Image !== 'undefined') {
+          const img = new Image()
+          img.onload = () => {
+            try {
+              rx.ctx.drawImage(img, 0, 0, rx.canvas.width, rx.canvas.height)
+            } catch {
+              // ignore
+            }
+          }
+          img.src = frame
+        }
+        return
       }
-      img.src = frame
+
+      if (kind === 'audio' && audio && !nativeConnected && typeof window !== 'undefined') {
+        setLevels((prev) => ({ ...prev, [from]: level || 0.2 }))
+        if ((level || 0) > 0.06) setActiveSpeakerId(from)
+        try {
+          const AC = window.AudioContext || window.webkitAudioContext
+          if (!AC || typeof atob !== 'function') return
+          if (!relayAudioCtxRef.current) {
+            relayAudioCtxRef.current = new AC()
+          }
+          const ctx = relayAudioCtxRef.current
+          if (ctx.state === 'suspended') ctx.resume().catch(() => {})
+          const binary = atob(audio)
+          const bytes = new Uint8Array(binary.length)
+          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+          const pcm16 = new Int16Array(bytes.buffer)
+          if (pcm16.length === 0) return
+          const audioBuf = ctx.createBuffer(1, pcm16.length, sampleRate || 12000)
+          const ch = audioBuf.getChannelData(0)
+          for (let i = 0; i < pcm16.length; i++) {
+            ch[i] = pcm16[i] / 32768
+          }
+          const src = ctx.createBufferSource()
+          src.buffer = audioBuf
+          src.connect(ctx.destination)
+          let rxAudio = relayRxRef.current.get(`${from}:audio`)
+          if (!rxAudio) {
+            rxAudio = { nextAudioTime: 0 }
+            relayRxRef.current.set(`${from}:audio`, rxAudio)
+          }
+          const now = ctx.currentTime
+          const startAt = Math.max(now + 0.02, rxAudio.nextAudioTime || 0)
+          src.start(startAt)
+          rxAudio.nextAudioTime = startAt + audioBuf.duration
+        } catch {
+          // Audio playback blocked or unsupported
+        }
+      }
     })
     socket.on('liveness_update', ({ userId, liveness }) => {
       if (!userId || !liveness) return
@@ -1045,8 +1312,10 @@ export function useConference({ meetingRef, user }) {
       }
     } else {
       await stopCamera()
+      emit('media_relay', { kind: 'video_off', streamKind: 'camera', ts: Date.now() })
     }
     emit('media_state', { videoEnabled: next })
+    syncRelayTxRef.current?.()
   }, [emit, notify, startCamera, stopCamera])
 
   const selectMicrophone = useCallback(async (deviceId) => {

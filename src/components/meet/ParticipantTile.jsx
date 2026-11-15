@@ -25,6 +25,7 @@ export const ParticipantTile = ({
   isSelf = false,
   isOwnerHost = false,
   stream = null,
+  relayFrame = null,
   videoOn = false,
   audioOn = true,
   handRaised = false,
@@ -43,7 +44,8 @@ export const ParticipantTile = ({
   onRemove
 }) => {
   const [menuOpen, setMenuOpen] = useState(false)
-  const showVideo = videoOn && stream && stream.getVideoTracks().length > 0
+  const hasStreamVideo = Boolean(stream && stream.getVideoTracks && stream.getVideoTracks().length > 0)
+  const showVideo = videoOn && ( Boolean(relayFrame) || hasStreamVideo )
 
   const placeholder = (
     <div className="w-full h-full flex flex-col items-center justify-center bg-[#28292c] gap-2 px-2 text-center">
@@ -78,7 +80,15 @@ export const ParticipantTile = ({
       }`}
     >
       {showVideo ? (
-        <MediaVideo stream={stream} mirror={mirror} fallback={waitingForVideo} />
+        relayFrame ? (
+          <img
+            src={relayFrame}
+            alt={name}
+            className={`w-full h-full object-cover ${mirror ? '-scale-x-100' : ''}`}
+          />
+        ) : (
+          <MediaVideo stream={stream} mirror={mirror} fallback={waitingForVideo} />
+        )
       ) : (
         placeholder
       )}

@@ -60,22 +60,18 @@ class Config:
     EMAIL_TIMEOUT_SECONDS = int(os.getenv('EMAIL_TIMEOUT_SECONDS', '12') or 12)
 
     # WebRTC ICE servers handed to browsers by GET /api/ice-servers.
-    # Includes built-in STUN + OpenRelay TURN (UDP/TCP/TLS 80 & 443) so calls
-    # across mobile data (Symmetric NAT) and strict firewalls work out of the box.
+    # Uses fast global STUN servers by default; optional external TURN servers can
+    # be configured via TURN_URLS, while built-in HTTPS Socket.IO media_relay
+    # handles symmetric NAT / firewall traversal automatically on port 443.
     STUN_URLS = _split_csv(os.getenv('STUN_URLS')) or [
         'stun:stun.l.google.com:19302',
         'stun:stun1.l.google.com:19302',
+        'stun:stun2.l.google.com:19302',
         'stun:stun.cloudflare.com:3478',
     ]
-    TURN_URLS = _split_csv(os.getenv('TURN_URLS')) or [
-        'turn:openrelay.metered.ca:80',
-        'turn:openrelay.metered.ca:80?transport=tcp',
-        'turn:openrelay.metered.ca:443',
-        'turn:openrelay.metered.ca:443?transport=tcp',
-        'turns:openrelay.metered.ca:443?transport=tcp',
-    ]
-    TURN_USERNAME = os.getenv('TURN_USERNAME', 'openrelayproject')
-    TURN_CREDENTIAL = os.getenv('TURN_CREDENTIAL', 'openrelayproject')
+    TURN_URLS = _split_csv(os.getenv('TURN_URLS'))
+    TURN_USERNAME = os.getenv('TURN_USERNAME', '')
+    TURN_CREDENTIAL = os.getenv('TURN_CREDENTIAL', '')
 
     @classmethod
     def email_provider(cls):

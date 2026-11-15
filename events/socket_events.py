@@ -280,18 +280,31 @@ def setup_socket_events(socketio):
     def handle_media_relay(data):
         """HTTPS WebSocket media relay fallback when symmetric NAT / firewalls block direct WebRTC."""
         meeting_id, _entry = caller()
-        if not meeting_id or not data:
+        if not meeting_id or not isinstance(data, dict):
             return
-        frame = data.get('frame')
-        if not frame or len(str(frame)) > 120_000:
-            return
-        target = data.get('to')
+        kind = data.get('kind') or ('video' if data.get('frame') else 'heartbeat')
         payload = {
             'from': request.sid,
+            'kind': kind,
             'streamKind': data.get('streamKind') or 'camera',
-            'frame': frame,
             'ts': data.get('ts'),
         }
+        if kind == 'video':
+            frame = data.get('frame')
+            if not frame or len(str(frame)) > 180_000:
+                return
+            payload['frame'] = frame
+        elif kind == 'audio':
+            audio = data.get('audio')
+            if not audio or len(str(audio)) > 80_000:
+                return
+            payload['audio'] = audio
+            payload['sampleRate'] = int(data.get('sampleRate') or 12000)
+            payload['level'] = float(data.get('level') or 0.0)
+        elif kind not in ('heartbeat', 'video_off'):
+            return
+
+        target = data.get('to')
         if target and presence.same_room(request.sid, target):
             socketio.emit('media_relay', payload, to=target)
         else:

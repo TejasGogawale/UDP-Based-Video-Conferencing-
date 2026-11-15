@@ -217,6 +217,30 @@ class BackendTests(unittest.TestCase):
         c.emit('signal', {'to': b_id, 'data': {'candidate': 'evil'}})
         self.assertIsNone(last(b, 'signal'))
 
+    def test_media_relay_forwards_video_audio_and_heartbeat_in_room(self):
+        t1, _ = make_user(self.http, 'Host')
+        t2, _ = make_user(self.http, 'Guest')
+        meeting = self.create_meeting(t1)
+        a, b = self.connect(t1), self.connect(t2)
+        a.emit('join_meeting', {'meetingId': meeting['id'], 'clientId': 'a'})
+        b.emit('join_meeting', {'meetingId': meeting['id'], 'clientId': 'b'})
+        a_id = last(a, 'joined')['selfId']
+
+        a.emit('media_relay', {'kind': 'video', 'streamKind': 'camera', 'frame': 'data:image/jpeg;base64,AAAA', 'ts': 100})
+        got_vid = last(b, 'media_relay')
+        self.assertEqual(got_vid['from'], a_id)
+        self.assertEqual(got_vid['kind'], 'video')
+        self.assertEqual(got_vid['frame'], 'data:image/jpeg;base64,AAAA')
+
+        a.emit('media_relay', {'kind': 'audio', 'audio': 'BBBB', 'sampleRate': 12000, 'level': 0.4, 'ts': 101})
+        got_aud = last(b, 'media_relay')
+        self.assertEqual(got_aud['kind'], 'audio')
+        self.assertEqual(got_aud['audio'], 'BBBB')
+
+        a.emit('media_relay', {'kind': 'heartbeat', 'ts': 102})
+        got_hb = last(b, 'media_relay')
+        self.assertEqual(got_hb['kind'], 'heartbeat')
+
     def test_media_hand_and_screen_state_are_in_the_roster(self):
         t1, _ = make_user(self.http, 'Host')
         t2, _ = make_user(self.http, 'Guest')

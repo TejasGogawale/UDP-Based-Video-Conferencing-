@@ -95,7 +95,7 @@ const Filmstrip = ({ tiles, vertical, pinnedId, onPin }) => (
 )
 
 const PresentationStage = ({ presentation, onStopScreenShare }) => {
-  const { stream, presenterName, isSelf, hasVideo } = presentation
+  const { stream, relayFrame, presenterName, isSelf, hasVideo } = presentation
   const label = isSelf ? 'You are presenting' : `${presenterName} is presenting`
 
   const waiting = (
@@ -113,7 +113,13 @@ const PresentationStage = ({ presentation, onStopScreenShare }) => {
 
   return (
     <div className="relative flex-1 min-h-0 min-w-0 bg-black rounded-xl sm:rounded-2xl overflow-hidden border border-[#3c4043]">
-      {stream && hasVideo ? <MediaVideo stream={stream} fit="contain" fallback={waiting} /> : waiting}
+      {relayFrame ? (
+        <img src={relayFrame} alt={label} className="w-full h-full object-contain" />
+      ) : stream && hasVideo ? (
+        <MediaVideo stream={stream} fit="contain" fallback={waiting} />
+      ) : (
+        waiting
+      )}
 
       <div className="absolute top-2 left-2 sm:top-3 sm:left-3 flex items-center gap-2 px-3 py-1.5 bg-[#202124]/90 backdrop-blur-md rounded-full text-xs font-medium text-white border border-white/10 z-20 max-w-[70%]">
         <Monitor className="w-3.5 h-3.5 text-[#8ab4f8] shrink-0" />
