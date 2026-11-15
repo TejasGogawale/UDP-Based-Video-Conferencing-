@@ -1,5 +1,5 @@
 // Service Worker for VIT Connect PWA (enables Android 'Install App' / WebAPK)
-const CACHE_NAME = 'vit-connect-v2';
+const CACHE_NAME = 'vit-connect-v3';
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();

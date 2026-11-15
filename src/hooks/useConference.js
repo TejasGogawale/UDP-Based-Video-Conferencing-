@@ -128,9 +128,18 @@ export function useConference({ meetingRef, user }) {
     screenTrack: null,
     audioCtx: null,
     audioSource: null,
+    screenAudioSource: null,
     audioProcessor: null,
     audioTrack: null,
+    screenAudioTrack: null,
     lastHeartbeat: 0
+  })
+  const audioMixerRef = useRef({
+    ctx: null,
+    micTrack: null,
+    screenAudioTrack: null,
+    dest: null,
+    mixedTrack: null
   })
   const relayRxRef = useRef(new Map()) // peerId -> { canvas, ctx, stream, nextAudioTime }
   const relayAudioCtxRef = useRef(null)
@@ -165,15 +174,86 @@ export function useConference({ meetingRef, user }) {
     if (socket?.connected) socket.emit(event, payload)
   }, [])
 
+  const stopAudioMixer = useCallback(() => {
+    const mixer = audioMixerRef.current
+    if (mixer.ctx) {
+      try {
+        mixer.ctx.close?.()
+      } catch {
+        // ignore
+      }
+    }
+    mixer.ctx = null
+    mixer.micTrack = null
+    mixer.screenAudioTrack = null
+    mixer.dest = null
+    mixer.mixedTrack = null
+  }, [])
+
+  const resolveOutgoingAudio = useCallback(() => {
+    const mic = liveTrack(micRef.current)
+    const screenAudio = liveTrack(screenRef.current?.getAudioTracks?.()[0])
+    if (!screenAudio) {
+      stopAudioMixer()
+      return { outgoingAudio: mic, separateScreenAudio: null }
+    }
+    if (typeof window !== 'undefined' && (window.AudioContext || window.webkitAudioContext)) {
+      const mixer = audioMixerRef.current
+      if (
+        mixer.ctx &&
+        mixer.micTrack === mic &&
+        mixer.screenAudioTrack === screenAudio &&
+        liveTrack(mixer.mixedTrack)
+      ) {
+        if (mixer.ctx.state === 'suspended') mixer.ctx.resume?.().catch(() => {})
+        return { outgoingAudio: mixer.mixedTrack, separateScreenAudio: null }
+      }
+      stopAudioMixer()
+      try {
+        const AC = window.AudioContext || window.webkitAudioContext
+        const ctx = new AC()
+        if (ctx.state === 'suspended') ctx.resume?.().catch(() => {})
+        const dest = ctx.createMediaStreamDestination()
+        const screenSrc = ctx.createMediaStreamSource(new MediaStream([screenAudio]))
+        screenSrc.connect(dest)
+        if (mic) {
+          const micSrc = ctx.createMediaStreamSource(new MediaStream([mic]))
+          micSrc.connect(dest)
+        }
+        const mixedTrack = dest.stream.getAudioTracks()[0] || null
+        if (mixedTrack) {
+          mixer.ctx = ctx
+          mixer.micTrack = mic
+          mixer.screenAudioTrack = screenAudio
+          mixer.dest = dest
+          mixer.mixedTrack = mixedTrack
+          return { outgoingAudio: mixedTrack, separateScreenAudio: null }
+        }
+        ctx.close?.()
+      } catch {
+        // Fall through if AudioContext mixing fails
+      }
+    }
+    if (audioEnabledRef.current && mic) {
+      return { outgoingAudio: mic, separateScreenAudio: screenAudio }
+    }
+    return { outgoingAudio: screenAudio, separateScreenAudio: null }
+  }, [stopAudioMixer])
+
   /** Publish the current local tracks to the preview, the meters and every peer. */
   const publishLocal = useCallback(() => {
     const mic = liveTrack(micRef.current)
     const cam = videoEnabledRef.current ? liveTrack(sentCamRef.current) : null
     const tracks = [mic, cam].filter(Boolean)
     setLocalStream(tracks.length ? new MediaStream(tracks) : null)
-    meshRef.current?.setLocalTracks({ mic, cam })
+    const { outgoingAudio, separateScreenAudio } = resolveOutgoingAudio()
+    meshRef.current?.setLocalTracks({
+      mic: outgoingAudio,
+      cam,
+      screenAudio: separateScreenAudio
+    })
     if (levelMonitorRef.current) {
-      if (mic) levelMonitorRef.current.watch('self', new MediaStream([mic]))
+      if (outgoingAudio) levelMonitorRef.current.watch('self', new MediaStream([outgoingAudio]))
       else levelMonitorRef.current.unwatch('self')
     }
     livenessVerifierRef.current?.setTracks({
@@ -181,7 +261,7 @@ export function useConference({ meetingRef, user }) {
       audioTrack: audioEnabledRef.current ? mic : null
     })
     syncRelayTxRef.current?.()
-  }, [])
+  }, [resolveOutgoingAudio])
 
   const refreshDevices = useCallback(async () => {
     try {
@@ -314,6 +394,7 @@ export function useConference({ meetingRef, user }) {
 
   const releaseAllMedia = useCallback(() => {
     processorRef.current?.stop()
+    stopAudioMixer()
     stopTrack(rawCamRef.current)
     stopTrack(micRef.current)
     screenRef.current?.getTracks().forEach(stopTrack)
@@ -324,7 +405,7 @@ export function useConference({ meetingRef, user }) {
     setLocalStream(null)
     setLocalScreenStream(null)
     levelMonitorRef.current?.unwatch('self')
-  }, [])
+  }, [stopAudioMixer])
 
   /** Acquire mic + camera for the lobby preview (single permission prompt). */
   const initMedia = useCallback(async () => {
@@ -409,18 +490,21 @@ export function useConference({ meetingRef, user }) {
       tx.screenEl = null
       tx.screenTrack = null
     }
-    if (tx.audioProcessor || tx.audioSource || tx.audioCtx) {
+    if (tx.audioProcessor || tx.audioSource || tx.screenAudioSource || tx.audioCtx) {
       try {
         tx.audioProcessor?.disconnect()
         tx.audioSource?.disconnect()
+        tx.screenAudioSource?.disconnect()
         tx.audioCtx?.close?.()
       } catch {
         // ignore
       }
       tx.audioProcessor = null
       tx.audioSource = null
+      tx.screenAudioSource = null
       tx.audioCtx = null
       tx.audioTrack = null
+      tx.screenAudioTrack = null
     }
   }, [])
 
@@ -431,13 +515,15 @@ export function useConference({ meetingRef, user }) {
       return
     }
 
-    // Set up Web Audio PCM16 capture for microphone relay when audio is enabled
+    // Set up Web Audio PCM16 capture for microphone + screen share audio relay
     const micTrack = audioEnabledRef.current ? liveTrack(micRef.current) : null
-    if (micTrack && typeof window !== 'undefined' && (window.AudioContext || window.webkitAudioContext)) {
-      if (tx.audioTrack !== micTrack || !tx.audioCtx) {
+    const screenAudioTrack = liveTrack(screenRef.current?.getAudioTracks?.()[0])
+    if ((micTrack || screenAudioTrack) && typeof window !== 'undefined' && (window.AudioContext || window.webkitAudioContext)) {
+      if (tx.audioTrack !== micTrack || tx.screenAudioTrack !== screenAudioTrack || !tx.audioCtx) {
         try {
           tx.audioProcessor?.disconnect()
           tx.audioSource?.disconnect()
+          tx.screenAudioSource?.disconnect()
           tx.audioCtx?.close?.()
         } catch {
           // ignore
@@ -445,16 +531,27 @@ export function useConference({ meetingRef, user }) {
         try {
           const AC = window.AudioContext || window.webkitAudioContext
           const ctx = new AC()
-          const source = ctx.createMediaStreamSource(new MediaStream([micTrack]))
+          if (ctx.state === 'suspended') ctx.resume?.().catch(() => {})
           const processor = ctx.createScriptProcessor(4096, 1, 1)
           const zeroGain = ctx.createGain()
           zeroGain.gain.value = 0
-          source.connect(processor)
+          let micSource = null
+          let screenSource = null
+          if (micTrack) {
+            micSource = ctx.createMediaStreamSource(new MediaStream([micTrack]))
+            micSource.connect(processor)
+          }
+          if (screenAudioTrack) {
+            screenSource = ctx.createMediaStreamSource(new MediaStream([screenAudioTrack]))
+            screenSource.connect(processor)
+          }
           processor.connect(zeroGain)
           zeroGain.connect(ctx.destination)
           const targetRate = 12000
           processor.onaudioprocess = (e) => {
-            if (relayPeersRef.current.size === 0 || !audioEnabledRef.current) return
+            const hasMic = audioEnabledRef.current && Boolean(liveTrack(micRef.current))
+            const hasScreenAudio = Boolean(liveTrack(screenRef.current?.getAudioTracks?.()[0]))
+            if (relayPeersRef.current.size === 0 || (!hasMic && !hasScreenAudio)) return
             const input = e.inputBuffer.getChannelData(0)
             const inRate = ctx.sampleRate || 48000
             const ratio = Math.max(1, inRate / targetRate)
@@ -468,7 +565,7 @@ export function useConference({ meetingRef, user }) {
               pcm16[i] = sample < 0 ? sample * 0x8000 : sample * 0x7fff
             }
             const rms = Math.sqrt(sumSq / outLen)
-            if (rms < 0.003) return
+            if (rms < 0.0025) return
             const bytes = new Uint8Array(pcm16.buffer)
             let binary = ''
             for (let i = 0; i < bytes.byteLength; i++) {
@@ -486,9 +583,11 @@ export function useConference({ meetingRef, user }) {
             }
           }
           tx.audioCtx = ctx
-          tx.audioSource = source
+          tx.audioSource = micSource
+          tx.screenAudioSource = screenSource
           tx.audioProcessor = processor
           tx.audioTrack = micTrack
+          tx.screenAudioTrack = screenAudioTrack
         } catch {
           // AudioContext unavailable in headless test environments
         }
@@ -497,14 +596,17 @@ export function useConference({ meetingRef, user }) {
       try {
         tx.audioProcessor?.disconnect()
         tx.audioSource?.disconnect()
+        tx.screenAudioSource?.disconnect()
         tx.audioCtx?.close?.()
       } catch {
         // ignore
       }
       tx.audioProcessor = null
       tx.audioSource = null
+      tx.screenAudioSource = null
       tx.audioCtx = null
       tx.audioTrack = null
+      tx.screenAudioTrack = null
     }
 
     if (tx.timer) return
@@ -654,20 +756,20 @@ export function useConference({ meetingRef, user }) {
     })
     meshRef.current = mesh
     if (import.meta.env.DEV) window.__vitMesh = mesh // debugging aid, dev builds only
-    const mic = liveTrack(micRef.current)
+    const { outgoingAudio, separateScreenAudio } = resolveOutgoingAudio()
     const cam = videoEnabledRef.current ? liveTrack(sentCamRef.current) : null
     const screenTracks = screenRef.current
     mesh.setLocalTracks({
-      mic,
+      mic: outgoingAudio,
       cam,
       screen: liveTrack(screenTracks?.getVideoTracks()[0]) || null,
-      screenAudio: liveTrack(screenTracks?.getAudioTracks()[0]) || null
+      screenAudio: separateScreenAudio
     })
     const queued = pendingSignalsRef.current
     pendingSignalsRef.current = []
     queued.forEach(({ from, data }) => mesh.handleSignal(from, data))
     return mesh
-  }, [emit, teardownMesh])
+  }, [emit, resolveOutgoingAudio, teardownMesh])
 
   // ---------------- screen share ----------------
   const stopScreenShare = useCallback((silent = false) => {
@@ -677,11 +779,12 @@ export function useConference({ meetingRef, user }) {
     screenRef.current = null
     setLocalScreenStream(null)
     meshRef.current?.setLocalTracks({ screen: null, screenAudio: null })
+    publishLocal()
     emit('screen_share_status', { isSharing: false })
     emit('media_relay', { kind: 'video_off', streamKind: 'screen', ts: Date.now() })
     syncRelayTxRef.current?.()
     if (!silent) notify('You stopped presenting.')
-  }, [emit, notify])
+  }, [emit, notify, publishLocal])
 
   const startScreenShare = useCallback(async () => {
     if (!canShareScreen()) {
@@ -707,13 +810,28 @@ export function useConference({ meetingRef, user }) {
       return
     }
     const video = stream.getVideoTracks()[0]
+    const screenAudio = stream.getAudioTracks()[0] || null
     video.onended = () => stopScreenShare() // browser's own "Stop sharing" button
+    if (screenAudio) {
+      screenAudio.onended = () => publishLocal()
+    }
     screenRef.current = stream
     setLocalScreenStream(stream)
-    meshRef.current?.setLocalTracks({ screen: video, screenAudio: stream.getAudioTracks()[0] || null })
+    const { outgoingAudio, separateScreenAudio } = resolveOutgoingAudio()
+    meshRef.current?.setLocalTracks({
+      mic: outgoingAudio,
+      screen: video,
+      screenAudio: separateScreenAudio
+    })
+    publishLocal()
     emit('screen_share_status', { isSharing: true, streamId: outStreamsRef.current.screen.id })
+    if (screenAudio) {
+      notify('Presenting your screen with audio.')
+    } else {
+      notify('Screen shared without audio. To share sound, select a Browser Tab or Entire Screen and enable "Also share audio".')
+    }
     syncRelayTxRef.current?.()
-  }, [emit, notify, stopScreenShare])
+  }, [emit, notify, publishLocal, resolveOutgoingAudio, stopScreenShare])
 
   const toggleScreenShare = useCallback(() => {
     if (screenRef.current) stopScreenShare()

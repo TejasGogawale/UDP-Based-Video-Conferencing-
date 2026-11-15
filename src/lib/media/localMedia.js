@@ -129,8 +129,17 @@ export const canShareScreen = () => Boolean(navigator.mediaDevices?.getDisplayMe
 export async function acquireScreen() {
   // Capped at 1080p/15fps: enough for slides and code, and within what phone
   // hardware decoders accept on the receiving side.
+  // Disable voice filters on shared tab/system audio so music and video sound
+  // are not suppressed by browser microphone DSP.
   return navigator.mediaDevices.getDisplayMedia({
     video: { width: { max: 1920 }, height: { max: 1080 }, frameRate: { ideal: 15, max: 30 } },
-    audio: true
+    audio: {
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false,
+      suppressLocalAudioPlayback: false
+    },
+    systemAudio: 'include',
+    selfBrowserSurface: 'include'
   })
 }
