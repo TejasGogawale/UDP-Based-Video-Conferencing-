@@ -380,6 +380,124 @@ class BackendTests(unittest.TestCase):
         self.assertIn(body['database']['dialect'], ('sqlite', 'postgresql'))
         self.assertFalse(body['email']['configured'])
 
+    # -- liveness & anti-deepfake verification --------------------------------
+    def test_liveness_hmac_chain_and_deepfake_detection(self):
+        import time
+        from services.liveness import compute_chained_hmac
+
+        t1, _ = make_user(self.http, 'Host')
+        meeting = self.create_meeting(t1)
+        a = self.connect(t1)
+        a.emit('join_meeting', {'meetingId': meeting['id'], 'clientId': 'a'})
+        joined = last(a, 'joined')
+        seed = joined['livenessSeed']
+        self.assertTrue(seed)
+
+        # 1. Valid cryptographic liveness proof #1
+        ts1 = int(time.time() * 1000)
+        sig1 = compute_chained_hmac(seed, 1, ts1, 'f0f0a1a1', '88776655', 94, 'genesis')
+        a.emit('liveness_proof', {
+            'seq': 1,
+            'timestamp': ts1,
+            'videoDigest': 'f0f0a1a1',
+            'audioDigest': '88776655',
+            'score': 94,
+            'mode': 'active',
+            'signature': sig1,
+        })
+        upd1 = last(a, 'liveness_update')
+        self.assertEqual(upd1['liveness']['status'], 'verified')
+        self.assertEqual(upd1['liveness']['chainLength'], 1)
+
+        # 2. Chained proof #2 reporting synthetic/virtual camera feed
+        ts2 = int(time.time() * 1000)
+        sig2 = compute_chained_hmac(seed, 2, ts2, '00000000', '88776655', 35, sig1)
+        a.emit('liveness_proof', {
+            'seq': 2,
+            'timestamp': ts2,
+            'videoDigest': '00000000',
+            'audioDigest': '88776655',
+            'score': 35,
+            'mode': 'synthetic',
+            'anomaly': 'Virtual camera feed (OBS Virtual Camera)',
+            'signature': sig2,
+        })
+        upd2 = last(a, 'liveness_update')
+        self.assertEqual(upd2['liveness']['status'], 'synthetic')
+        self.assertEqual(upd2['liveness']['chainLength'], 2)
+
+        # 3. Tampered signature or replay attack is flagged as 'tampered'
+        a.emit('liveness_proof', {
+            'seq': 3,
+            'timestamp': ts2,
+            'videoDigest': 'f0f0a1a1',
+            'audioDigest': '88776655',
+            'score': 99,
+            'mode': 'active',
+            'signature': 'deadbeef' * 8,
+        })
+        upd3 = last(a, 'liveness_update')
+        self.assertEqual(upd3['liveness']['status'], 'tampered')
+        self.assertEqual(upd3['liveness']['score'], 0)
+
+    # -- GF(2^8) Reed-Solomon FEC & Swarm Super-Peer Election -----------------
+    def test_gf256_reed_solomon_fec_0rtt_reconstruction(self):
+        from networking.fec_gf256 import decode_fec_shards, encode_fec_shards
+
+        payload = b'VIT-Connect critical audio PCM & keyframe delta stream!' * 7
+        # 1. Level 1 Degraded (8, 6) RS-FEC: drop shards 0 and 3 (2 source shards lost)
+        shards_8_6, orig_len = encode_fec_shards(payload, n=8, k=6)
+        surviving_8_6 = [s for s in shards_8_6 if s[0] not in (0, 3)]
+        self.assertEqual(len(surviving_8_6), 6)
+        recovered_8_6 = decode_fec_shards(surviving_8_6, n=8, k=6, orig_len=orig_len)
+        self.assertEqual(recovered_8_6, payload)
+
+        # 2. Level 2 Severe (10, 6) RS-FEC: drop 4 shards (shards 1, 2, 4, 7)
+        shards_10_6, orig_len = encode_fec_shards(payload, n=10, k=6)
+        surviving_10_6 = [s for s in shards_10_6 if s[0] not in (1, 2, 4, 7)]
+        self.assertEqual(len(surviving_10_6), 6)
+        recovered_10_6 = decode_fec_shards(surviving_10_6, n=10, k=6, orig_len=orig_len)
+        self.assertEqual(recovered_10_6, payload)
+
+    def test_channel_impairment_index_and_swarm_super_peer_election(self):
+        from services.swarm import compute_channel_impairment
+
+        # Verify patent Table 1 thresholds
+        lvl0 = compute_channel_impairment(plf=0.01, jitter_ms=10, rtt_ms=30, cpu_util_pct=20)
+        self.assertEqual((lvl0['level'], lvl0['fec']), (0, None))
+        lvl1 = compute_channel_impairment(plf=0.12, jitter_ms=90, rtt_ms=120, cpu_util_pct=35)
+        self.assertEqual((lvl1['level'], lvl1['fec']['code']), (1, 'RS(8,6)'))
+        lvl2 = compute_channel_impairment(plf=0.25, jitter_ms=170, rtt_ms=260, cpu_util_pct=70)
+        self.assertEqual((lvl2['level'], lvl2['fec']['code']), (2, 'RS(10,6)'))
+
+        # Verify 6-participant room transitions to 'swarm_micro_sfu' and elects highest-NCS peer
+        tokens = [make_user(self.http, f'Peer{i}')[0] for i in range(6)]
+        meeting = self.create_meeting(tokens[0])
+        clients = [self.connect(t) for t in tokens]
+        sids = []
+        for idx, c in enumerate(clients):
+            c.emit('join_meeting', {'meetingId': meeting['id'], 'clientId': f'c{idx}'})
+            sids.append(last(c, 'joined')['selfId'])
+
+        # Peer 3 reports fiber-grade uplink (4000 kbps, 12ms RTT, 10% CPU) -> highest NCS
+        clients[3].emit('telemetry_report', {
+            'plf': 0.0, 'jitterMs': 2.0, 'rttMs': 12.0, 'uplinkKbps': 4000.0, 'cpuUtilPct': 10.0
+        })
+        # Peer 1 reports second-best capability (runner-up backup Super-Peer)
+        clients[1].emit('telemetry_report', {
+            'plf': 0.01, 'jitterMs': 8.0, 'rttMs': 22.0, 'uplinkKbps': 3200.0, 'cpuUtilPct': 18.0
+        })
+        swarm_evt = last(clients[0], 'swarm_topology_update')
+        self.assertEqual(swarm_evt['swarm']['mode'], 'swarm_micro_sfu')
+        self.assertEqual(swarm_evt['swarm']['superPeerId'], sids[3])
+        self.assertEqual(swarm_evt['swarm']['backupSuperPeerId'], sids[1])
+
+        # Failover test: when Super-Peer (Peer 3) leaves, Peer 1 is immediately promoted
+        clients[3].emit('leave_meeting')
+        updated_roster = last(clients[0], 'roster_update')['participants']
+        by_id = {p['userId']: p for p in updated_roster}
+        self.assertTrue(by_id[sids[1]]['isSuperPeer'])
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

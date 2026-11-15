@@ -1,8 +1,11 @@
+import base64
 import socket
 import json
 import threading
 import logging
+import uuid
 from datetime import datetime
+from networking.fec_gf256 import decode_fec_shards, encode_fec_shards
 
 logging.basicConfig(
     level=logging.INFO,
@@ -65,6 +68,27 @@ class UDPClient:
                 'content': content
             }
             self.send_message(message)
+
+    def broadcast_with_fec(self, payload: bytes, n: int = 8, k: int = 6):
+        """Partition `payload` into K source shards and N-K GF(2^8) parity shards
+        and transmit all N datagrams over UDP."""
+        if not self.room_id:
+            return
+        if isinstance(payload, str):
+            payload = payload.encode('utf-8')
+        shards, orig_len = encode_fec_shards(payload, n=n, k=k)
+        frame_id = uuid.uuid4().hex[:12]
+        for shard_idx, shard_bytes in shards:
+            self.send_message({
+                'action': 'fec_shard',
+                'room_id': self.room_id,
+                'frame_id': frame_id,
+                'shard_idx': shard_idx,
+                'n': n,
+                'k': k,
+                'orig_len': orig_len,
+                'shard_b64': base64.b64encode(shard_bytes).decode('ascii'),
+            })
 
     def ping(self):
         message = {'action': 'ping'}

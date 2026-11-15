@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Mic, MicOff, Pin, PinOff, Hand, VolumeX, UserX, Monitor, WifiOff, Loader2, Crown } from 'lucide-react'
+import { Mic, MicOff, Pin, PinOff, Hand, VolumeX, UserX, Monitor, WifiOff, Loader2, Crown, ShieldCheck, ShieldAlert } from 'lucide-react'
 import { MediaVideo } from './media/MediaVideo'
 import { levelToPercent } from '../../lib/media/audioLevels'
 
@@ -33,6 +33,7 @@ export const ParticipantTile = ({
   level = 0,
   connection = 'connected', // connecting | connected | reconnecting | failed
   quality = null,
+  liveness = null,
   pinned = false,
   compact = false,
   mirror = false,
@@ -113,6 +114,26 @@ export const ParticipantTile = ({
           <MicOff className="w-3.5 h-3.5 text-[#f28b82] shrink-0" aria-label="Microphone muted" />
         )}
         {quality === 'poor' && !isSelf && <WifiOff className="w-3 h-3 text-[#fbbc04] shrink-0" aria-label="Poor connection" />}
+        {liveness?.status === 'verified' && (
+          <span
+            className="shrink-0 flex items-center text-[#81c995]"
+            title={`${liveness.reason || 'Live feed verified'} (${liveness.score}% confidence)`}
+            data-testid="liveness-badge"
+            data-liveness="verified"
+          >
+            <ShieldCheck className="w-3.5 h-3.5" />
+          </span>
+        )}
+        {(liveness?.status === 'synthetic' || liveness?.status === 'tampered') && (
+          <span
+            className="shrink-0 flex items-center text-[#f28b82]"
+            title={`${liveness.reason || 'Synthetic/unverified media feed'} (${liveness.score}% confidence)`}
+            data-testid="liveness-badge"
+            data-liveness={liveness.status}
+          >
+            <ShieldAlert className="w-3.5 h-3.5" />
+          </span>
+        )}
       </div>
 
       {handRaised && (

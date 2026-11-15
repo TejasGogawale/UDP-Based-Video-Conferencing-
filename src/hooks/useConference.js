@@ -13,6 +13,7 @@ import {
 } from '../lib/media/localMedia'
 import { AudioLevelMonitor } from '../lib/media/audioLevels'
 import { BackgroundProcessor, effectsSupport } from '../lib/media/backgroundProcessor'
+import { LivenessVerifier } from '../lib/media/livenessVerifier'
 import { LiveCaptionService, captionsSupported } from '../components/meet/utils/speechRecognition'
 import { MeetingRecorder, recordingSupported } from '../lib/media/recorder'
 import { sounds } from '../components/meet/utils/soundEffects'
@@ -111,6 +112,7 @@ export function useConference({ meetingRef, user }) {
   const isHostRef = useRef(false)
   const chatOpenRef = useRef(false)
   const levelMonitorRef = useRef(null)
+  const livenessVerifierRef = useRef(null)
   const captionServiceRef = useRef(null)
   const recorderRef = useRef(null)
   const remoteMediaRef = useRef({})
@@ -154,6 +156,10 @@ export function useConference({ meetingRef, user }) {
       if (mic) levelMonitorRef.current.watch('self', new MediaStream([mic]))
       else levelMonitorRef.current.unwatch('self')
     }
+    livenessVerifierRef.current?.setTracks({
+      videoTrack: videoEnabledRef.current ? liveTrack(rawCamRef.current) : null,
+      audioTrack: audioEnabledRef.current ? mic : null
+    })
   }, [])
 
   const refreshDevices = useCallback(async () => {
@@ -388,7 +394,16 @@ export function useConference({ meetingRef, user }) {
           return next
         })
       },
-      onPeerStats: (peerId, stats) => setPeerStats((prev) => ({ ...prev, [peerId]: stats }))
+      onPeerStats: (peerId, stats) => {
+        setPeerStats((prev) => ({ ...prev, [peerId]: stats }))
+        emit('telemetry_report', {
+          plf: (stats.lossPct || 0) / 100,
+          jitterMs: stats.jitterMs || 0,
+          rttMs: stats.rtt ?? 30,
+          uplinkKbps: stats.uplinkKbps || 2500,
+          cpuUtilPct: 20
+        })
+      }
     })
     meshRef.current = mesh
     if (import.meta.env.DEV) window.__vitMesh = mesh // debugging aid, dev builds only
@@ -524,6 +539,7 @@ export function useConference({ meetingRef, user }) {
   const endCall = useCallback((reason, { canRejoin = true, notifyServer = true } = {}) => {
     if (notifyServer) emit('leave_meeting')
     if (recorderRef.current?.active) recorderRef.current.stop()
+    livenessVerifierRef.current?.stop()
     captionServiceRef.current?.stop()
     stopScreenShare(true)
     teardownMesh()
@@ -599,6 +615,19 @@ export function useConference({ meetingRef, user }) {
       setCaptionsDemand(Boolean(state.captionsDemand))
       const mesh = buildMesh(payload.selfId)
       mesh.syncPeers(payload.participants.map((p) => p.userId).filter((id) => id !== payload.selfId))
+      if (payload.livenessSeed) {
+        if (!livenessVerifierRef.current) {
+          livenessVerifierRef.current = new LivenessVerifier({
+            onProof: (proof) => socketRef.current?.emit('liveness_proof', proof)
+          })
+        }
+        livenessVerifierRef.current.setTracks({
+          videoTrack: videoEnabledRef.current ? liveTrack(rawCamRef.current) : null,
+          audioTrack: audioEnabledRef.current ? liveTrack(micRef.current) : null
+        })
+        livenessVerifierRef.current.setSeed(payload.livenessSeed)
+        livenessVerifierRef.current.start()
+      }
       if (stageRef.current !== 'in_call') {
         setStage('in_call')
         setJoinedAt(Date.now())
@@ -628,6 +657,22 @@ export function useConference({ meetingRef, user }) {
     })
 
     socket.on('signal', handleSignal)
+    socket.on('liveness_update', ({ userId, liveness }) => {
+      if (!userId || !liveness) return
+      setRoster((prev) => prev.map((p) => (p.userId === userId ? { ...p, liveness } : p)))
+    })
+    socket.on('swarm_topology_update', ({ userId, telemetry, swarm }) => {
+      if (!userId) return
+      setRoster((prev) =>
+        prev.map((p) => ({
+          ...p,
+          telemetry: p.userId === userId && telemetry ? telemetry : p.telemetry,
+          isSuperPeer: swarm ? p.userId === swarm.superPeerId : p.isSuperPeer,
+          isBackupSuperPeer: swarm ? p.userId === swarm.backupSuperPeerId : p.isBackupSuperPeer,
+          topologyMode: swarm?.mode || p.topologyMode
+        }))
+      )
+    })
 
     socket.on('chat_message', (msg) => {
       setChatMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [...prev, msg].slice(-MAX_CHAT)))
@@ -778,6 +823,8 @@ export function useConference({ meetingRef, user }) {
       window.removeEventListener('online', onOnline)
       window.removeEventListener('offline', onOffline)
       if (recorderRef.current?.active) recorderRef.current.stop()
+      livenessVerifierRef.current?.close()
+      livenessVerifierRef.current = null
       captionServiceRef.current?.stop()
       captionServiceRef.current = null
       meshRef.current?.close()

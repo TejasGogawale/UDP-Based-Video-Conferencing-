@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Users, Search, Mic, MicOff, Video, VideoOff, Hand, Pin, VolumeX, UserX, Crown, Monitor, WifiOff, UserPlus } from 'lucide-react'
+import { Users, Search, Mic, MicOff, Video, VideoOff, Hand, Pin, VolumeX, UserX, Crown, Monitor, WifiOff, UserPlus, ShieldCheck, ShieldAlert } from 'lucide-react'
 import { DrawerShell } from './DrawerShell'
 import { InvitePanel } from './InvitePanel'
 
@@ -69,6 +69,38 @@ export const PeopleDrawer = ({
                   {p.isOwnerHost && (
                     <span className="px-1.5 py-0.5 bg-blue-900/60 rounded text-[10px] text-[#8ab4f8] font-bold border border-blue-700/50 flex items-center gap-0.5 shrink-0">
                       <Crown className="w-2.5 h-2.5" /> Host
+                    </span>
+                  )}
+                  {p.isSuperPeer && (
+                    <span
+                      className="px-1.5 py-0.5 bg-purple-950/60 rounded text-[10px] text-purple-300 font-semibold border border-purple-700/40 shrink-0"
+                      title={`Elected Swarm Super-Peer (NCS: ${p.telemetry?.ncs ?? 75})`}
+                    >
+                      Super-Peer
+                    </span>
+                  )}
+                  {p.telemetry?.fec?.code && (
+                    <span
+                      className="px-1.5 py-0.5 bg-amber-950/60 rounded text-[10px] text-[#fbbc04] font-semibold border border-amber-700/40 shrink-0"
+                      title={`Channel Impairment CI=${p.telemetry.ci}: Active ${p.telemetry.fec.code} GF(2^8) FEC`}
+                    >
+                      {p.telemetry.fec.code}
+                    </span>
+                  )}
+                  {p.liveness?.status === 'verified' && (
+                    <span
+                      className="px-1.5 py-0.5 bg-emerald-950/60 rounded text-[10px] text-[#81c995] font-semibold border border-emerald-700/40 flex items-center gap-0.5 shrink-0"
+                      title={p.liveness.reason || 'Cryptographic liveness verified'}
+                    >
+                      <ShieldCheck className="w-2.5 h-2.5" /> {p.liveness.score}% Live
+                    </span>
+                  )}
+                  {(p.liveness?.status === 'synthetic' || p.liveness?.status === 'tampered') && (
+                    <span
+                      className="px-1.5 py-0.5 bg-red-950/60 rounded text-[10px] text-[#f28b82] font-semibold border border-red-700/40 flex items-center gap-0.5 shrink-0"
+                      title={p.liveness.reason || 'Synthetic or tampered stream detected'}
+                    >
+                      <ShieldAlert className="w-2.5 h-2.5" /> {p.liveness.status === 'tampered' ? 'Tampered' : 'Synthetic'}
                     </span>
                   )}
                 </div>

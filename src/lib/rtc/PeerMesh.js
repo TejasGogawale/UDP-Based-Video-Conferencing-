@@ -11,6 +11,13 @@
 // in the server roster, so a receiver can tell a camera from a screen share
 // without depending on message ordering.
 
+import {
+  computeChannelImpairment,
+  computeNodeCapabilityScore,
+  decodeFecShards,
+  encodeFecShards
+} from './fecGf256'
+
 const SLOT_STREAM = { mic: 'camera', cam: 'camera', screen: 'screen', screenAudio: 'screen' }
 const STATS_INTERVAL_MS = 4000
 const DISCONNECT_GRACE_MS = 5000
@@ -173,10 +180,59 @@ export class PeerMesh {
     // which keeps connection-state and quality reporting meaningful.
     try {
       peer.channel = peer.pc.createDataChannel('presence', { negotiated: true, id: 0 })
+      peer.fecBuffers = new Map()
+      peer.channel.onmessage = (evt) => this.handleDataChannelMessage(peer, evt.data)
     } catch {
       // Data channels unavailable: media negotiation still works.
     }
     this.applyTracks(peer)
+  }
+
+  handleDataChannelMessage(peer, raw) {
+    try {
+      const msg = typeof raw === 'string' ? JSON.parse(raw) : null
+      if (!msg || msg.type !== 'fec_shard') return
+      const { frameId, index, n, k, origLen, bytes } = msg
+      let buf = peer.fecBuffers.get(frameId)
+      if (!buf) {
+        buf = { n, k, origLen, shards: [], reconstructed: false }
+        peer.fecBuffers.set(frameId, buf)
+        if (peer.fecBuffers.size > 24) {
+          const oldest = peer.fecBuffers.keys().next().value
+          peer.fecBuffers.delete(oldest)
+        }
+      }
+      buf.shards.push({ index, data: new Uint8Array(bytes) })
+      if (!buf.reconstructed && buf.shards.length >= k) {
+        decodeFecShards(buf.shards, n, k, origLen)
+        buf.reconstructed = true
+        peer.debug.fecReconstructed = (peer.debug.fecReconstructed || 0) + 1
+      }
+    } catch {
+      // Ignore malformed data channel frames
+    }
+  }
+
+  sendFecBlock(peer, payloadStr, n = 8, k = 6) {
+    if (!peer.channel || peer.channel.readyState !== 'open') return
+    try {
+      const bytes = new TextEncoder().encode(payloadStr)
+      const { shards, origLen } = encodeFecShards(bytes, n, k)
+      const frameId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
+      for (const s of shards) {
+        peer.channel.send(JSON.stringify({
+          type: 'fec_shard',
+          frameId,
+          index: s.index,
+          n,
+          k,
+          origLen,
+          bytes: Array.from(s.data)
+        }))
+      }
+    } catch {
+      // Data channel congested or closed
+    }
   }
 
   removePeer(peerId) {
@@ -338,6 +394,8 @@ export class PeerMesh {
       try {
         const report = await peer.pc.getStats()
         let rtt = null
+        let jitterMs = 0
+        let uplinkKbps = 2500
         let lost = 0
         let received = 0
         let relayed = false
@@ -348,11 +406,17 @@ export class PeerMesh {
         report.forEach((stat) => {
           if (stat.type === 'candidate-pair' && stat.state === 'succeeded' && stat.nominated) {
             if (typeof stat.currentRoundTripTime === 'number') rtt = stat.currentRoundTripTime * 1000
+            if (typeof stat.availableOutgoingBitrate === 'number' && stat.availableOutgoingBitrate > 0) {
+              uplinkKbps = stat.availableOutgoingBitrate / 1000
+            }
             relayed = candidates.get(stat.localCandidateId)?.candidateType === 'relay'
           }
           if (stat.type === 'inbound-rtp' && !stat.isRemote) {
             lost += stat.packetsLost || 0
             received += stat.packetsReceived || 0
+            if (typeof stat.jitter === 'number') {
+              jitterMs = Math.max(jitterMs, stat.jitter * 1000)
+            }
           }
         })
         const prev = peer.lastStats
@@ -363,11 +427,36 @@ export class PeerMesh {
           const dTotal = dLost + Math.max(0, received - prev.received)
           lossPct = dTotal > 0 ? (dLost / dTotal) * 100 : 0
         }
+        const impairment = computeChannelImpairment({
+          plf: lossPct / 100,
+          jitterMs,
+          rttMs: rtt ?? 35,
+          cpuUtilPct: 20
+        })
+        const ncs = computeNodeCapabilityScore({
+          uplinkKbps,
+          avgRttMs: rtt ?? 35,
+          cpuUtilPct: 20
+        })
+        if (impairment.fec) {
+          this.sendFecBlock(peer, JSON.stringify({ t: Date.now(), ci: impairment.ci }), impairment.fec.n, impairment.fec.k)
+        }
         const quality =
-          lossPct > 8 || (rtt !== null && rtt > 600) ? 'poor'
-            : lossPct > 2 || (rtt !== null && rtt > 250) ? 'fair'
+          lossPct > 8 || (rtt !== null && rtt > 600) || impairment.level === 2 ? 'poor'
+            : lossPct > 2 || (rtt !== null && rtt > 250) || impairment.level === 1 ? 'fair'
               : 'good'
-        this.onPeerStats(peer.id, { rtt, lossPct, quality, relayed })
+        this.onPeerStats(peer.id, {
+          rtt,
+          lossPct,
+          jitterMs,
+          uplinkKbps,
+          ci: impairment.ci,
+          impairmentState: impairment.state,
+          fec: impairment.fec,
+          ncs,
+          quality,
+          relayed
+        })
       } catch {
         // Connection closed mid-read.
       }

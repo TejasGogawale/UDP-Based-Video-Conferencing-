@@ -114,6 +114,9 @@ const ConferenceRoom = () => {
       speaking: conf.activeSpeakerId === conf.selfId && conf.audioEnabled,
       level: conf.levels.self || 0,
       connection: 'connected',
+      liveness: conf.self?.liveness || null,
+      isSuperPeer: Boolean(conf.self?.isSuperPeer),
+      telemetry: conf.self?.telemetry || null,
       mirror: true
     }]
     for (const p of conf.others) {
@@ -132,6 +135,9 @@ const ConferenceRoom = () => {
         level: conf.levels[p.userId] || 0,
         connection: conf.peerStates[p.userId] || 'connecting',
         quality: conf.peerStats[p.userId]?.quality,
+        liveness: p.liveness || null,
+        isSuperPeer: Boolean(p.isSuperPeer),
+        telemetry: p.telemetry || null,
         canModerate: conf.isHost,
         // Removal is offered only in the People panel, behind a confirmation.
         onMute: () => conf.hostAction('mute_user', { targetUserId: p.userId })
@@ -165,7 +171,8 @@ const ConferenceRoom = () => {
 
   const people = tiles.map((t) => ({
     id: t.id, name: t.name, isSelf: t.isSelf, isOwnerHost: t.isOwnerHost, audioOn: t.audioOn, videoOn: t.videoOn,
-    handRaised: t.handRaised, isPresenting: t.isPresenting, connection: t.connection
+    handRaised: t.handRaised, isPresenting: t.isPresenting, connection: t.connection, liveness: t.liveness,
+    isSuperPeer: t.isSuperPeer, telemetry: t.telemetry
   }))
 
   const downloadChat = () => {

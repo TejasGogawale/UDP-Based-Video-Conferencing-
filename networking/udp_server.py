@@ -1,9 +1,11 @@
+import base64
 import socket
 import threading
 import logging
 import json
 from datetime import datetime
 from collections import defaultdict
+from networking.fec_gf256 import decode_fec_shards, encode_fec_shards
 
 logging.basicConfig(
     level=logging.INFO,
@@ -17,6 +19,7 @@ class UDPConferencingServer:
         self.port = port
         self.socket = None
         self.rooms = defaultdict(dict)
+        self.fec_buffers = defaultdict(dict)  # (room_id, frame_id) -> {n, k, orig_len, shards: {idx: bytes}}
         self.running = False
         self.client_threads = []
 
@@ -60,6 +63,8 @@ class UDPConferencingServer:
                 self.handle_leave(addr, message)
             elif action == 'broadcast':
                 self.handle_broadcast(addr, message)
+            elif action == 'fec_shard':
+                self.handle_fec_shard(addr, message)
             elif action == 'ping':
                 self.handle_ping(addr)
             else:
@@ -131,6 +136,42 @@ class UDPConferencingServer:
             json.dumps(response).encode('utf-8'),
             addr
         )
+
+    def handle_fec_shard(self, addr, message):
+        """Ingest a sub-packet GF(2^8) Reed-Solomon FEC shard, relay it immediately,
+        and reconstruct the complete block in 0-RTT as soon as any K of N shards arrive."""
+        room_id = message.get('room_id')
+        frame_id = message.get('frame_id')
+        shard_idx = int(message.get('shard_idx', 0))
+        n = int(message.get('n', 8))
+        k = int(message.get('k', 6))
+        orig_len = int(message.get('orig_len', 0))
+        raw_b64 = message.get('shard_b64', '')
+        if not room_id or not frame_id or not raw_b64:
+            return
+
+        # 1. Relay the shard to downstream peers in the room
+        self.broadcast_to_room(room_id, message)
+
+        # 2. Buffer & reconstruct in 0-RTT once any K shards arrive
+        key = (room_id, frame_id)
+        buf = self.fec_buffers.setdefault(key, {
+            'n': n, 'k': k, 'orig_len': orig_len, 'shards': {}, 'reconstructed': False
+        })
+        buf['shards'][shard_idx] = base64.b64decode(raw_b64)
+        if not buf['reconstructed'] and len(buf['shards']) >= k:
+            try:
+                recovered = decode_fec_shards(list(buf['shards'].items()), n, k, orig_len)
+                buf['reconstructed'] = True
+                self.broadcast_to_room(room_id, {
+                    'action': 'fec_reconstructed',
+                    'room_id': room_id,
+                    'frame_id': frame_id,
+                    'scheme': f'RS({n},{k})',
+                    'payload_b64': base64.b64encode(recovered).decode('ascii'),
+                })
+            except Exception as exc:
+                logger.error(f'FEC decode error for frame {frame_id}: {exc}')
 
     def broadcast_to_room(self, room_id, message):
         if room_id not in self.rooms:

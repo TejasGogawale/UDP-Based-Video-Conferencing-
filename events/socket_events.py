@@ -20,6 +20,7 @@ from models.meeting import Meeting
 from models.message import Message
 from models.participant import Participant
 from models.user import User
+from services.liveness import default_liveness_state, issue_liveness_seed
 from services.presence import presence
 
 logging.basicConfig(level=logging.INFO)
@@ -188,6 +189,7 @@ def setup_socket_events(socketio):
         if presence.room_of(request.sid) not in (None, meeting_id):
             remove_participant(request.sid)
 
+        liveness_seed = issue_liveness_seed(meeting_id, str(user_id), request.sid)
         evicted = presence.join(meeting_id, request.sid, {
             'clientId': str(data.get('clientId') or '')[:64],
             'dbUserId': user_id,
@@ -199,6 +201,8 @@ def setup_socket_events(socketio):
             'cameraStreamId': data.get('cameraStreamId'),
             'screenStreamId': None,
             'captions': False,
+            'livenessSeed': liveness_seed,
+            'liveness': default_liveness_state(),
         })
         for stale_sid in evicted:
             # Same browser tab came back on a new socket: drop the old one.
@@ -230,6 +234,7 @@ def setup_socket_events(socketio):
 
         emit('joined', {
             'selfId': request.sid,
+            'livenessSeed': liveness_seed,
             'meeting': meeting.to_dict(),
             'isHost': meeting.creator_id == user_id,
             'participants': presence.roster(meeting_id),
@@ -546,3 +551,30 @@ def setup_socket_events(socketio):
             socketio.emit('meeting_ended', {'by': entry['userName']}, to=meeting_id, skip_sid=request.sid)
             for sid in presence.sids(meeting_id):
                 remove_participant(sid)
+
+    # ------------------------------------------------------------------
+    # Cryptographic Audio-Video Liveness & Anti-Deepfake Verification
+    # ------------------------------------------------------------------
+    @socketio.on('liveness_proof')
+    def handle_liveness_proof(data):
+        meeting_id, result = presence.verify_liveness(request.sid, data or {})
+        if not meeting_id or not result:
+            return
+        socketio.emit('liveness_update', {
+            'userId': request.sid,
+            'liveness': result,
+        }, to=meeting_id)
+
+    # ------------------------------------------------------------------
+    # Telemetry, Channel Impairment (CI) & Swarm Super-Peer Election
+    # ------------------------------------------------------------------
+    @socketio.on('telemetry_report')
+    def handle_telemetry_report(data):
+        meeting_id, telemetry, swarm = presence.update_telemetry(request.sid, data or {})
+        if not meeting_id or not telemetry:
+            return
+        socketio.emit('swarm_topology_update', {
+            'userId': request.sid,
+            'telemetry': telemetry,
+            'swarm': swarm,
+        }, to=meeting_id)
