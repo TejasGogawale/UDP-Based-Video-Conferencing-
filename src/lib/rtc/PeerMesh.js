@@ -25,14 +25,39 @@ const DISCONNECT_GRACE_MS = 5000
 // negotiation itself (covers an initiator that never sends one).
 const FIRST_OFFER_TIMEOUT_MS = 5000
 
+export const DEFAULT_ICE_SERVERS = [
+  {
+    urls: [
+      'stun:stun.l.google.com:19302',
+      'stun:stun1.l.google.com:19302',
+      'stun:stun.cloudflare.com:3478'
+    ]
+  },
+  {
+    urls: [
+      'turn:openrelay.metered.ca:80',
+      'turn:openrelay.metered.ca:80?transport=tcp',
+      'turn:openrelay.metered.ca:443',
+      'turn:openrelay.metered.ca:443?transport=tcp',
+      'turns:openrelay.metered.ca:443?transport=tcp'
+    ],
+    username: 'openrelayproject',
+    credential: 'openrelayproject'
+  }
+]
+
 export class PeerMesh {
-  constructor({ selfId, iceServers, outStreams, sendSignal, onRemoteStreams, onPeerState, onPeerStats }) {
+  constructor({ selfId, iceServers, outStreams, sendSignal, onRemoteStreams, onPeerState, onPeerStats, onRelayNeeded }) {
     this.selfId = selfId
-    this.rtcConfig = { iceServers: iceServers?.length ? iceServers : [{ urls: 'stun:stun.l.google.com:19302' }] }
+    this.rtcConfig = {
+      iceServers: iceServers?.length ? iceServers : DEFAULT_ICE_SERVERS,
+      iceCandidatePoolSize: 4
+    }
     this.sendSignal = sendSignal
     this.onRemoteStreams = onRemoteStreams || (() => {})
     this.onPeerState = onPeerState || (() => {})
     this.onPeerStats = onPeerStats || (() => {})
+    this.onRelayNeeded = onRelayNeeded || (() => {})
 
     this.peers = new Map()
     this.closed = false
@@ -149,17 +174,33 @@ export class PeerMesh {
     pc.oniceconnectionstatechange = () => {
       clearTimeout(peer.disconnectTimer)
       const state = pc.iceConnectionState
-      if (state === 'failed') {
-        pc.restartIce()
+      if (state === 'connected' || state === 'completed') {
+        clearTimeout(peer.relayFallbackTimer)
+        this.onRelayNeeded(peerId, false)
+      } else if (state === 'failed') {
+        this.onRelayNeeded(peerId, true)
+        this.triggerIceRestart(peer)
       } else if (state === 'disconnected') {
-        // Often recovers by itself; if not, renegotiate ICE.
+        // Often recovers by itself; if not, renegotiate ICE and enable HTTPS relay fallback.
         peer.disconnectTimer = setTimeout(() => {
-          if (pc.iceConnectionState === 'disconnected') pc.restartIce()
+          if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') {
+            this.onRelayNeeded(peerId, true)
+            this.triggerIceRestart(peer)
+          }
         }, DISCONNECT_GRACE_MS)
       }
       this.onPeerState(peerId, this.describeState(pc))
     }
     pc.onconnectionstatechange = () => this.onPeerState(peerId, this.describeState(pc))
+
+    // If direct UDP + TURN has not connected after 6 seconds, activate HTTPS WebSocket relay
+    // so strict mobile/college firewalls never leave the user staring at a failed screen.
+    peer.relayFallbackTimer = setTimeout(() => {
+      const ice = pc.iceConnectionState
+      if (ice !== 'connected' && ice !== 'completed') {
+        this.onRelayNeeded(peerId, true)
+      }
+    }, 6000)
 
     if (peer.polite) {
       peer.startTimer = setTimeout(() => this.startPeer(peer), FIRST_OFFER_TIMEOUT_MS)
@@ -235,11 +276,31 @@ export class PeerMesh {
     }
   }
 
+  async triggerIceRestart(peer) {
+    const { pc } = peer
+    try {
+      pc.restartIce?.()
+      if (!peer.polite && pc.signalingState === 'stable' && !peer.makingOffer) {
+        peer.makingOffer = true
+        const offer = await pc.createOffer({ iceRestart: true })
+        await pc.setLocalDescription(offer)
+        peer.debug.offersSent++
+        this.sendSignal(peer.id, { description: pc.localDescription })
+      }
+    } catch {
+      // Ignore if peer closed mid-restart
+    } finally {
+      peer.makingOffer = false
+    }
+  }
+
   removePeer(peerId) {
     const peer = this.peers.get(peerId)
     if (!peer) return
     clearTimeout(peer.disconnectTimer)
     clearTimeout(peer.startTimer)
+    clearTimeout(peer.relayFallbackTimer)
+    this.onRelayNeeded(peerId, false)
     peer.pc.onnegotiationneeded = null
     peer.pc.onicecandidate = null
     peer.pc.ontrack = null

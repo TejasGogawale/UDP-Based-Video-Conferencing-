@@ -7,7 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { io } from 'socket.io-client'
 import axios from 'axios'
 import { API_BASE_URL, API_ENDPOINTS, SOCKET_URL } from '../config/api'
-import { PeerMesh } from '../lib/rtc/PeerMesh'
+import { DEFAULT_ICE_SERVERS, PeerMesh } from '../lib/rtc/PeerMesh'
 import {
   acquireCamera, acquireInitial, acquireMicrophone, acquireScreen, canShareScreen, listDevices
 } from '../lib/media/localMedia'
@@ -18,7 +18,7 @@ import { LiveCaptionService, captionsSupported } from '../components/meet/utils/
 import { MeetingRecorder, recordingSupported } from '../lib/media/recorder'
 import { sounds } from '../components/meet/utils/soundEffects'
 
-const DEFAULT_ICE = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }]
+const DEFAULT_ICE = DEFAULT_ICE_SERVERS
 const CAPTION_TTL_MS = 7000
 const MAX_CAPTION_LINES = 4
 const MAX_CHAT = 300
@@ -115,6 +115,9 @@ export function useConference({ meetingRef, user }) {
   const livenessVerifierRef = useRef(null)
   const captionServiceRef = useRef(null)
   const recorderRef = useRef(null)
+  const relayPeersRef = useRef(new Set())
+  const relayTxRef = useRef({ timer: null, videoEl: null, canvas: null, ctx: null, track: null })
+  const relayRxRef = useRef(new Map()) // peerId -> { canvas, ctx, stream }
   const remoteMediaRef = useRef({})
   const rosterRef = useRef([])
   // Incremented on every mount/unmount; async media work started under an older
@@ -362,14 +365,76 @@ export function useConference({ meetingRef, user }) {
   }, [applyCameraPipeline, handleCamEnded, handleMicEnded, publishLocal, refreshDevices, runCamOp, user?.name])
 
   // ---------------- mesh lifecycle ----------------
+  const stopRelayTx = useCallback(() => {
+    const tx = relayTxRef.current
+    if (tx.timer) {
+      clearInterval(tx.timer)
+      tx.timer = null
+    }
+    if (tx.videoEl) {
+      try {
+        tx.videoEl.pause()
+        tx.videoEl.srcObject = null
+      } catch {
+        // ignore
+      }
+      tx.videoEl = null
+      tx.track = null
+    }
+  }, [])
+
+  const syncRelayTx = useCallback(() => {
+    const tx = relayTxRef.current
+    if (relayPeersRef.current.size === 0 || stageRef.current !== 'in_call') {
+      stopRelayTx()
+      return
+    }
+    if (tx.timer) return
+    tx.timer = setInterval(() => {
+      if (relayPeersRef.current.size === 0 || !videoEnabledRef.current) return
+      const camTrack = liveTrack(sentCamRef.current)
+      if (!camTrack || typeof document === 'undefined') return
+      try {
+        if (tx.track !== camTrack || !tx.videoEl) {
+          tx.track = camTrack
+          const v = document.createElement('video')
+          v.muted = true
+          v.playsInline = true
+          v.srcObject = new MediaStream([camTrack])
+          v.play().catch(() => {})
+          tx.videoEl = v
+        }
+        if (!tx.canvas) {
+          tx.canvas = document.createElement('canvas')
+          tx.canvas.width = 320
+          tx.canvas.height = 180
+          tx.ctx = tx.canvas.getContext('2d')
+        }
+        if (tx.videoEl.readyState >= 2 && tx.ctx) {
+          tx.ctx.drawImage(tx.videoEl, 0, 0, 320, 180)
+          const frame = tx.canvas.toDataURL('image/jpeg', 0.5)
+          emit('media_relay', { streamKind: 'camera', frame, ts: Date.now() })
+        }
+      } catch {
+        // Ignore canvas capture errors in headless environments
+      }
+    }, 260)
+  }, [emit, stopRelayTx])
+
   const teardownMesh = useCallback(() => {
     meshRef.current?.close()
     meshRef.current = null
     pendingSignalsRef.current = []
+    relayPeersRef.current.clear()
+    stopRelayTx()
+    for (const rx of relayRxRef.current.values()) {
+      rx.stream?.getTracks?.().forEach(stopTrack)
+    }
+    relayRxRef.current.clear()
     setRemoteMedia({})
     setPeerStates({})
     setPeerStats({})
-  }, [])
+  }, [stopRelayTx])
 
   const buildMesh = useCallback((myId) => {
     teardownMesh()
@@ -389,10 +454,21 @@ export function useConference({ meetingRef, user }) {
       onPeerState: (peerId, state) => {
         setPeerStates((prev) => {
           const next = { ...prev }
-          if (state) next[peerId] = state
-          else delete next[peerId]
+          if (!state) {
+            delete next[peerId]
+          } else if (state === 'failed' && relayRxRef.current.has(peerId)) {
+            // Keep tile in 'connected' state while HTTPS WebSocket relay is active
+            next[peerId] = 'connected'
+          } else {
+            next[peerId] = state
+          }
           return next
         })
+      },
+      onRelayNeeded: (peerId, needed) => {
+        if (needed) relayPeersRef.current.add(peerId)
+        else relayPeersRef.current.delete(peerId)
+        syncRelayTx()
       },
       onPeerStats: (peerId, stats) => {
         setPeerStats((prev) => ({ ...prev, [peerId]: stats }))
@@ -657,6 +733,45 @@ export function useConference({ meetingRef, user }) {
     })
 
     socket.on('signal', handleSignal)
+    socket.on('media_relay', ({ from, frame }) => {
+      if (!from || !frame || from === selfIdRef.current || typeof Image === 'undefined') return
+      // Also make sure we reciprocate relay frames back to a peer that is relaying to us
+      if (!relayPeersRef.current.has(from)) {
+        relayPeersRef.current.add(from)
+        syncRelayTx()
+      }
+      let rx = relayRxRef.current.get(from)
+      if (!rx && typeof document !== 'undefined') {
+        const canvas = document.createElement('canvas')
+        canvas.width = 320
+        canvas.height = 180
+        const ctx = canvas.getContext('2d')
+        const stream = canvas.captureStream ? canvas.captureStream(12) : null
+        rx = { canvas, ctx, stream }
+        relayRxRef.current.set(from, rx)
+      }
+      if (!rx?.ctx || !rx?.stream) return
+      const img = new Image()
+      img.onload = () => {
+        rx.ctx.drawImage(img, 0, 0, 320, 180)
+        setRemoteMedia((prev) => {
+          const existing = prev[from] || {}
+          const hasNativeVideo = Object.entries(existing).some(
+            ([k, v]) => k !== 'relay-camera' && v?.videoFlowing
+          )
+          if (hasNativeVideo) return prev
+          return {
+            ...prev,
+            [from]: {
+              ...existing,
+              'relay-camera': { stream: rx.stream, hasVideo: true, videoFlowing: true }
+            }
+          }
+        })
+        setPeerStates((prev) => (prev[from] === 'connected' ? prev : { ...prev, [from]: 'connected' }))
+      }
+      img.src = frame
+    })
     socket.on('liveness_update', ({ userId, liveness }) => {
       if (!userId || !liveness) return
       setRoster((prev) => prev.map((p) => (p.userId === userId ? { ...p, liveness } : p)))

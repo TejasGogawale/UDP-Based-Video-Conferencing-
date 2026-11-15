@@ -276,6 +276,27 @@ def setup_socket_events(socketio):
             return
         socketio.emit('signal', {'from': request.sid, 'data': data.get('data')}, to=target)
 
+    @socketio.on('media_relay')
+    def handle_media_relay(data):
+        """HTTPS WebSocket media relay fallback when symmetric NAT / firewalls block direct WebRTC."""
+        meeting_id, _entry = caller()
+        if not meeting_id or not data:
+            return
+        frame = data.get('frame')
+        if not frame or len(str(frame)) > 120_000:
+            return
+        target = data.get('to')
+        payload = {
+            'from': request.sid,
+            'streamKind': data.get('streamKind') or 'camera',
+            'frame': frame,
+            'ts': data.get('ts'),
+        }
+        if target and presence.same_room(request.sid, target):
+            socketio.emit('media_relay', payload, to=target)
+        else:
+            emit('media_relay', payload, to=meeting_id, skip_sid=request.sid)
+
     # ------------------------------------------------------------------
     # Per-participant state (all reflected in the roster)
     # ------------------------------------------------------------------
