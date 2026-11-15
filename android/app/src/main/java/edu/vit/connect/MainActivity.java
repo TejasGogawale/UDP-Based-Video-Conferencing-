@@ -2,12 +2,12 @@ package edu.vit.connect;
 
 import android.Manifest;
 import android.annotation.SuppressLint;
+import android.app.Activity;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Bundle;
-import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.webkit.CookieManager;
@@ -21,16 +21,8 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
 
-import androidx.activity.OnBackPressedCallback;
-import androidx.activity.result.ActivityResultLauncher;
-import androidx.activity.result.contract.ActivityResultContracts;
-import androidx.annotation.NonNull;
-import androidx.appcompat.app.AppCompatActivity;
-import androidx.core.content.ContextCompat;
-
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 
 /**
  * Native Android wrapper for the deployed VIT Connect web application.
@@ -39,38 +31,14 @@ import java.util.Map;
  * and bridges Android OS Camera/Microphone permissions to WebRTC inside the
  * Chromium WebView.
  */
-public class MainActivity extends AppCompatActivity {
+public class MainActivity extends Activity {
+
+    private static final int REQ_MEDIA_PERMISSIONS = 1001;
+    private static final int REQ_FILE_CHOOSER = 1002;
 
     private WebView webView;
     private PermissionRequest pendingWebRtcRequest;
     private ValueCallback<Uri[]> filePathCallback;
-
-    private final ActivityResultLauncher<String[]> mediaPermissionsLauncher =
-        registerForActivityResult(new ActivityResultContracts.RequestMultiplePermissions(),
-            (Map<String, Boolean> result) -> {
-                if (pendingWebRtcRequest != null) {
-                    try {
-                        pendingWebRtcRequest.grant(pendingWebRtcRequest.getResources());
-                    } catch (Exception ignored) {
-                    }
-                    pendingWebRtcRequest = null;
-                }
-            });
-
-    private final ActivityResultLauncher<Intent> filePickerLauncher =
-        registerForActivityResult(new ActivityResultContracts.StartActivityForResult(),
-            result -> {
-                if (filePathCallback == null) return;
-                Uri[] results = null;
-                if (result.getResultCode() == RESULT_OK && result.getData() != null) {
-                    String dataString = result.getData().getDataString();
-                    if (dataString != null) {
-                        results = new Uri[]{Uri.parse(dataString)};
-                    }
-                }
-                filePathCallback.onReceiveValue(results);
-                filePathCallback = null;
-            });
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -92,19 +60,6 @@ public class MainActivity extends AppCompatActivity {
 
         configureWebView();
         requestInitialMediaPermissionsIfNeeded();
-
-        getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
-            @Override
-            public void handleOnBackPressed() {
-                if (webView != null && webView.canGoBack()) {
-                    webView.goBack();
-                } else {
-                    setEnabled(false);
-                    getOnBackPressedDispatcher().onBackPressed();
-                }
-            }
-        });
-
         loadTargetUrl(getIntent());
     }
 
@@ -153,7 +108,7 @@ public class MainActivity extends AppCompatActivity {
 
         webView.setWebViewClient(new WebViewClient() {
             @Override
-            public boolean shouldOverrideUrlLoading(@NonNull WebView view, @NonNull WebResourceRequest request) {
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 Uri uri = request.getUrl();
                 String scheme = uri.getScheme() != null ? uri.getScheme().toLowerCase() : "";
                 String host = uri.getHost() != null ? uri.getHost().toLowerCase() : "";
@@ -189,7 +144,7 @@ public class MainActivity extends AppCompatActivity {
                         request.grant(request.getResources());
                     } else {
                         pendingWebRtcRequest = request;
-                        mediaPermissionsLauncher.launch(missingOsPermissions.toArray(new String[0]));
+                        requestPermissions(missingOsPermissions.toArray(new String[0]), REQ_MEDIA_PERMISSIONS);
                     }
                 });
             }
@@ -206,7 +161,7 @@ public class MainActivity extends AppCompatActivity {
                 MainActivity.this.filePathCallback = filePathCallback;
                 try {
                     Intent intent = fileChooserParams.createIntent();
-                    filePickerLauncher.launch(intent);
+                    startActivityForResult(intent, REQ_FILE_CHOOSER);
                     return true;
                 } catch (Exception e) {
                     MainActivity.this.filePathCallback = null;
@@ -216,6 +171,41 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQ_MEDIA_PERMISSIONS && pendingWebRtcRequest != null) {
+            try {
+                pendingWebRtcRequest.grant(pendingWebRtcRequest.getResources());
+            } catch (Exception ignored) {
+            }
+            pendingWebRtcRequest = null;
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQ_FILE_CHOOSER && filePathCallback != null) {
+            Uri[] results = null;
+            if (resultCode == RESULT_OK && data != null && data.getDataString() != null) {
+                results = new Uri[]{Uri.parse(data.getDataString())};
+            }
+            filePathCallback.onReceiveValue(results);
+            filePathCallback = null;
+        }
+    }
+
+    @Override
+    @SuppressWarnings("deprecation")
+    public void onBackPressed() {
+        if (webView != null && webView.canGoBack()) {
+            webView.goBack();
+        } else {
+            super.onBackPressed();
+        }
+    }
+
     private List<String> getMissingMediaPermissions() {
         String[] required = new String[]{
             Manifest.permission.CAMERA,
@@ -223,7 +213,7 @@ public class MainActivity extends AppCompatActivity {
         };
         List<String> missing = new ArrayList<>();
         for (String perm : required) {
-            if (ContextCompat.checkSelfPermission(this, perm) != PackageManager.PERMISSION_GRANTED) {
+            if (checkSelfPermission(perm) != PackageManager.PERMISSION_GRANTED) {
                 missing.add(perm);
             }
         }
@@ -233,7 +223,7 @@ public class MainActivity extends AppCompatActivity {
     private void requestInitialMediaPermissionsIfNeeded() {
         List<String> missing = getMissingMediaPermissions();
         if (!missing.isEmpty()) {
-            mediaPermissionsLauncher.launch(missing.toArray(new String[0]));
+            requestPermissions(missing.toArray(new String[0]), REQ_MEDIA_PERMISSIONS);
         }
     }
 
