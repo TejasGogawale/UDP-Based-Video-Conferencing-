@@ -2,7 +2,7 @@ name: Build VIT Connect Android APK
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main, master, fix/conferencing-overhaul ]
     paths:
       - 'android/**'
       - '.github/workflows/build-android-apk.yml'
@@ -10,30 +10,51 @@ on:
 
 jobs:
   build-apk:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v3
-        with:
-          gradle-version: '8.5'
+      - name: Configure Android SDK (Platform 34 & Build-Tools 34.0.0)
+        run: |
+          export ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          if [ ! -d "$ANDROID_HOME/cmdline-tools" ]; then
+            sudo mkdir -p "$ANDROID_HOME/cmdline-tools"
+            curl -sSL https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -o /tmp/cmdtools.zip
+            sudo unzip -q /tmp/cmdtools.zip -d "$ANDROID_HOME/cmdline-tools"
+            sudo mv "$ANDROID_HOME/cmdline-tools/cmdline-tools" "$ANDROID_HOME/cmdline-tools/latest"
+            sudo chmod -R 777 "$ANDROID_HOME"
+          fi
+          SDKMANAGER=$(find "$ANDROID_HOME" -name sdkmanager | head -n 1)
+          yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses > /dev/null || true
+          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> $GITHUB_ENV
+          echo "sdk.dir=$ANDROID_HOME" > android/local.properties
+
+      - name: Install Gradle 8.5
+        run: |
+          curl -sSL https://services.gradle.org/distributions/gradle-8.5-bin.zip -o /tmp/gradle.zip
+          sudo unzip -q /tmp/gradle.zip -d /opt/gradle
+          echo "/opt/gradle/gradle-8.5/bin" >> $GITHUB_PATH
 
       - name: Build Debug & Release APKs
         working-directory: ./android
-        run: gradle assembleDebug assembleRelease --no-daemon
+        run: |
+          gradle assembleDebug assembleRelease --no-daemon --stacktrace
+          cp app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/VIT-Connect-debug.apk
+          cp app/build/outputs/apk/release/app-release.apk app/build/outputs/apk/release/VIT-Connect-release.apk
 
       - name: Upload VIT Connect APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: VIT-Connect-Android-APK
           path: |
-            android/app/build/outputs/apk/debug/app-debug.apk
-            android/app/build/outputs/apk/release/app-release.apk
+            android/app/build/outputs/apk/debug/VIT-Connect-debug.apk
+            android/app/build/outputs/apk/release/VIT-Connect-release.apk
